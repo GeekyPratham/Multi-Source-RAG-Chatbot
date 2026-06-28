@@ -1,0 +1,83 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: insightagent_postgres
+    environment:
+      POSTGRES_USER: insightagent
+      POSTGRES_PASSWORD: insightagent
+      POSTGRES_DB: insightagent
+    ports:
+      - "5432:5432"
+    volumes:
+      - insightagent_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U insightagent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: insightagent_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - insightagent_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: insightagent_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://frontend:3000
+      - DATABASE_URL=postgresql+asyncpg://insightagent:insightagent@postgres:5432/insightagent
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET_KEY=change-this-in-production
+      - JWT_ACCESS_EXPIRE_MIN=15
+      - JWT_REFRESH_EXPIRE_DAYS=7
+      - ENCRYPTION_KEY= # Auto-generated if empty, set a stable key for production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - insightagent_vectors:/app/vector_store
+      - insightagent_cache:/app/.cache
+      - insightagent_logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: insightagent_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  insightagent_pgdata:
+  insightagent_redisdata:
+  insightagent_vectors:
+  insightagent_cache:
+  insightagent_logs:
