@@ -50,7 +50,11 @@ def _build_chat_model(provider_name: str, api_key: str, model: str, temperature:
 
         provider: Any = provider_impl
         model_name: str = model
-        temperature: float = temperature
+
+        def __init__(self, **kwargs):
+            # Capture temperature from enclosing scope (avoids Python class body scoping issue)
+            kwargs.setdefault('temperature', temperature)
+            super().__init__(**kwargs)
 
         def _call(self, prompt: str, stop: Optional[List[str]] = None, **kwargs) -> str:
             import asyncio

@@ -1,4 +1,8 @@
-"""services/auth_service.py — JWT creation/validation, password hashing, Redis token store."""
+"""services/auth_service.py — JWT creation/validation, password hashing, token storage.
+
+Uses the unified Redis service (Upstash REST or local redis.asyncio) for
+fast token storage. Falls back gracefully to DB-only if Redis is unavailable.
+"""
 from __future__ import annotations
 import os
 import uuid
@@ -7,11 +11,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
-import redis.asyncio as aioredis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.models_db import User, RefreshToken
 from app.core.database import async_session_factory
+from app.services.redis_service import (
+    setex as redis_setex,
+    get as redis_get,
+    delete as redis_delete,
+    is_available as redis_available,
+    close_redis as redis_close,
+)
 from app.utils.logger import log
 
 # ── Config from environment ───────────────────────────────────────────────────
@@ -20,41 +30,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_EXPIRE_MIN", "15"))
 REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("JWT_REFRESH_EXPIRE_DAYS", "7"))
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-# Lazy Redis connection (optional — degrades gracefully)
-_redis: Optional[aioredis.Redis] = None
-_redis_available: bool = True
-
-
-async def get_redis() -> Optional[aioredis.Redis]:
-    global _redis, _redis_available
-    if not _redis_available:
-        return None
-    if _redis is None:
-        try:
-            r = aioredis.from_url(REDIS_URL, decode_responses=True, socket_connect_timeout=2)
-            await r.ping()
-            _redis = r
-            log.info("Connected to Redis at %s", REDIS_URL)
-        except Exception as e:
-            log.warning("Redis not available at %s — falling back to DB-only token storage (%s)", REDIS_URL, e)
-            _redis_available = False
-            return None
-    return _redis
-
-
-async def close_redis():
-    global _redis
-    if _redis:
-        try:
-            await _redis.close()
-        except Exception:
-            pass
-        _redis = None
-        log.info("Redis connection closed")
 
 
 # ── Password utilities ────────────────────────────────────────────────────────
@@ -93,36 +69,32 @@ def decode_access_token(token: str) -> Optional[str]:
 
 # ── Redis-backed refresh token operations (best-effort) ───────────────────────
 async def store_refresh_token_redis(user_id: str, raw_token: str) -> None:
-    r = await get_redis()
-    if r is None:
+    if not redis_available():
         return  # Redis not available — skip
     key = f"refresh:{user_id}"
     ttl = REFRESH_TOKEN_EXPIRE_DAYS * 86400
-    try:
-        await r.setex(key, ttl, raw_token)
-    except Exception as e:
-        log.warning("Redis store failed: %s", e)
+    success = await redis_setex(key, ttl, raw_token)
+    if success:
+        log.debug("Stored refresh token in Redis for user %s", user_id)
+    else:
+        log.warning("Redis store failed for user %s", user_id)
 
 
 async def validate_refresh_token_redis(user_id: str, raw_token: str) -> bool:
-    r = await get_redis()
-    if r is None:
-        return False  # Can't validate without Redis
+    if not redis_available():
+        log.warning("Redis unavailable — cannot validate refresh token for user %s", user_id)
+        return False
     try:
-        stored = await r.get(f"refresh:{user_id}")
+        stored = await redis_get(f"refresh:{user_id}")
         return stored == raw_token
     except Exception:
         return False
 
 
 async def delete_refresh_token_redis(user_id: str) -> None:
-    r = await get_redis()
-    if r is None:
+    if not redis_available():
         return
-    try:
-        await r.delete(f"refresh:{user_id}")
-    except Exception:
-        pass
+    await redis_delete(f"refresh:{user_id}")
 
 
 # ── Database-backed refresh token persistence (fallback / rotation audit) ─────

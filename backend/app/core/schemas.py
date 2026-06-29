@@ -65,6 +65,14 @@ class SettingsResponse(BaseModel):
     llm_base_url: Optional[str] = None
 
 
+# ── Test Connection ────────────────────────────────────────────────────────────
+class TestConnectionRequest(BaseModel):
+    llm_provider: Optional[str] = Field(None, min_length=1, max_length=50)
+    llm_api_key: Optional[str] = Field(None, max_length=2048)
+    llm_model: Optional[str] = Field(None, min_length=1, max_length=100)
+    llm_base_url: Optional[str] = Field(None, max_length=500)
+
+
 # ── Generic ────────────────────────────────────────────────────────────────────
 class MessageResponse(BaseModel):
     message: str

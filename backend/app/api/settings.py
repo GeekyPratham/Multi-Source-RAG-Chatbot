@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.models_db import User
-from app.core.schemas import SettingsUpdate, SettingsResponse, MessageResponse
+from app.core.schemas import SettingsUpdate, SettingsResponse, MessageResponse, TestConnectionRequest
 from app.middleware.auth import get_current_user
 from app.services.providers import encrypt_api_key, decrypt_api_key, validate_provider_connection
 from app.utils.logger import log
@@ -65,19 +65,35 @@ async def update_settings(
 
 
 @router.post("/test", response_model=MessageResponse)
-async def test_llm_connection(current_user: User = Depends(get_current_user)):
-    """Test the user's configured LLM provider with a minimal API call."""
-    if not current_user.llm_api_key_encrypted:
-        raise HTTPException(status_code=400, detail="No API key configured. Save your API key first.")
-    if not current_user.llm_provider:
-        raise HTTPException(status_code=400, detail="No provider configured. Select a provider first.")
-    if not current_user.llm_model:
-        raise HTTPException(status_code=400, detail="No model configured. Enter a model name first.")
+async def test_llm_connection(
+    req: TestConnectionRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Test an LLM connection with provided or stored credentials.
 
-    api_key = decrypt_api_key(current_user.llm_api_key_encrypted)
-    provider = current_user.llm_provider
-    model = current_user.llm_model
-    base_url = current_user.llm_base_url
+    - If provider and api_key are provided in the body, test those.
+    - If not provided, fall back to the user's stored settings.
+    This allows testing before saving settings.
+    """
+    # Determine credentials: request body takes priority, else fall back to stored
+    provider = req.llm_provider or current_user.llm_provider
+    model = req.llm_model or current_user.llm_model
+    base_url = req.llm_base_url or current_user.llm_base_url
+
+    if req.llm_api_key:
+        api_key = req.llm_api_key
+    elif current_user.llm_api_key_encrypted:
+        try:
+            api_key = decrypt_api_key(current_user.llm_api_key_encrypted)
+        except Exception:
+            raise HTTPException(status_code=400, detail="stored_key_corrupted")
+    else:
+        raise HTTPException(status_code=400, detail="No API key provided. Enter your API key or save it first.")
+
+    if not provider:
+        raise HTTPException(status_code=400, detail="No provider specified.")
+    if not model:
+        raise HTTPException(status_code=400, detail="No model specified.")
 
     try:
         msg = await validate_provider_connection(provider, api_key, model, base_url)

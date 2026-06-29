@@ -41,7 +41,13 @@ export default function SettingsPage() {
     temperature: 0.7,
     llmBaseUrl: "",
   });
+  const [hasApiKey, setHasApiKey] = useState(false);
   const [fetched, setFetched] = useState(false);
+
+  // Sync hasApiKey from user context whenever it changes
+  useEffect(() => {
+    setHasApiKey(!!user?.has_api_key);
+  }, [user?.has_api_key]);
 
   useEffect(() => {
     if (user && !fetched) {
@@ -60,6 +66,7 @@ export default function SettingsPage() {
           temperature: data.temperature ?? 0.7,
           llmBaseUrl: data.llm_base_url || "",
         });
+        setHasApiKey(data.has_api_key);
       }).catch(() => {
         // Fallback to user object
         setForm({
@@ -99,7 +106,7 @@ export default function SettingsPage() {
       toast.error("Please enter a model name");
       return;
     }
-    if (!form.llmApiKey.trim() && !user?.has_api_key) {
+    if (!form.llmApiKey.trim() && !hasApiKey) {
       toast.error("Please enter your API key");
       return;
     }
@@ -134,7 +141,9 @@ export default function SettingsPage() {
         llm_provider: res.data.llm_provider,
         llm_model: res.data.llm_model,
         temperature: res.data.temperature,
+        has_api_key: res.data.has_api_key,
       });
+      setHasApiKey(res.data.has_api_key);
       setForm((prev) => ({ ...prev, llmApiKey: "" }));
       toast.success("Settings saved successfully!");
     } catch (e) {
@@ -155,56 +164,73 @@ export default function SettingsPage() {
       toast.error("Please enter a model name first");
       return;
     }
-    if (!form.llmApiKey.trim() && !user?.has_api_key) {
+    if (!form.llmApiKey.trim() && !hasApiKey) {
       toast.error("Please enter your API key first");
       return;
     }
 
-    // Save first, then test
-    if (form.llmApiKey.trim() || form.llmProvider !== (user?.llm_provider || "")) {
+    setTesting(true);
+    try {
+      // Send credentials to test endpoint (backend now accepts them in body)
+      const testPayload = {};
+      if (form.llmApiKey.trim()) {
+        testPayload.llm_api_key = form.llmApiKey.trim();
+      }
+      if (form.llmProvider.trim()) {
+        testPayload.llm_provider = form.llmProvider.trim();
+      }
+      if (form.llmModel.trim()) {
+        testPayload.llm_model = form.llmModel.trim();
+      }
+      if (form.llmBaseUrl.trim()) {
+        testPayload.llm_base_url = form.llmBaseUrl.trim();
+      }
+
+      const res = await api.post("/api/settings/test", testPayload, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("insightagent_access_token")}`,
+        },
+      });
+      toast.success(res.data.message);
+
+      // Test passed! Now save the settings to DB
       try {
         setLoading(true);
-        const payload = {
+        const savePayload = {
+          display_name: form.displayName || null,
           llm_provider: form.llmProvider.trim(),
           llm_model: form.llmModel.trim(),
           temperature: form.temperature,
         };
         if (form.llmApiKey.trim()) {
-          payload.llm_api_key = form.llmApiKey.trim();
+          savePayload.llm_api_key = form.llmApiKey.trim();
         }
         if (form.llmBaseUrl.trim()) {
-          payload.llm_base_url = form.llmBaseUrl.trim();
+          savePayload.llm_base_url = form.llmBaseUrl.trim();
         } else {
-          payload.llm_base_url = "";
+          savePayload.llm_base_url = "";
         }
-        await api.put("/api/settings", payload, {
+        const saveRes = await api.put("/api/settings", savePayload, {
           headers: {
             Authorization: `Bearer ${localStorage.getItem("insightagent_access_token")}`,
           },
         });
-        updateUser({ llm_provider: form.llmProvider.trim(), llm_model: form.llmModel.trim() });
+        updateUser({
+          display_name: saveRes.data.display_name,
+          llm_provider: saveRes.data.llm_provider,
+          llm_model: saveRes.data.llm_model,
+          temperature: saveRes.data.temperature,
+          has_api_key: saveRes.data.has_api_key,
+        });
+        setHasApiKey(saveRes.data.has_api_key);
         setForm((prev) => ({ ...prev, llmApiKey: "" }));
+        toast.success("Settings saved successfully!");
       } catch (e) {
-        toast.error(e?.response?.data?.detail || "Failed to save before test");
-        setLoading(false);
-        return;
+        // Test passed but save failed — still show success for test
+        toast.error("Connection works, but failed to save: " + (e?.response?.data?.detail || "Unknown error"));
       } finally {
         setLoading(false);
       }
-    }
-
-    setTesting(true);
-    try {
-      const res = await api.post(
-        "/api/settings/test",
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("insightagent_access_token")}`,
-          },
-        },
-      );
-      toast.success(res.data.message);
     } catch (e) {
       const detail = e?.response?.data?.detail || "Connection test failed";
       toast.error(detail);
@@ -308,7 +334,7 @@ export default function SettingsPage() {
                   type="password"
                   className="input-base"
                   placeholder={
-                    user?.has_api_key
+                    hasApiKey
                       ? "Leave blank to keep current key"
                       : "Enter your API key"
                   }
@@ -318,7 +344,7 @@ export default function SettingsPage() {
                   }
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  {user?.has_api_key
+                  {hasApiKey
                     ? "✓ API key is set. Enter a new one to replace it."
                     : "⚠️ No API key configured. You must add one to use the chat."}
                 </p>
@@ -446,7 +472,7 @@ export default function SettingsPage() {
             </button>
           </div>
 
-          {!form.llmProvider && !form.llmModel && !user?.has_api_key && (
+          {!form.llmProvider && !form.llmModel && !hasApiKey && (
             <div className="card border-amber-500/30 bg-amber-500/5">
               <p className="text-sm text-amber-400">
                 ⚠️ You need to configure a provider, API key, and model before you can use the chat.
