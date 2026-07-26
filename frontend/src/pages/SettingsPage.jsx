@@ -10,6 +10,8 @@ import {
   Sliders,
   User,
   Globe,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { api } from "../services/api";
@@ -43,6 +45,8 @@ export default function SettingsPage() {
   });
   const [hasApiKey, setHasApiKey] = useState(false);
   const [fetched, setFetched] = useState(false);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [storedApiKey, setStoredApiKey] = useState("");
 
   // Sync hasApiKey from user context whenever it changes
   useEffect(() => {
@@ -58,15 +62,17 @@ export default function SettingsPage() {
         },
       }).then(res => {
         const data = res.data;
+        const apiKey = data.llm_api_key || "";
         setForm({
           displayName: data.display_name || user.display_name || "",
           llmProvider: data.llm_provider || "",
-          llmApiKey: "",
+          llmApiKey: apiKey,
           llmModel: data.llm_model || "",
           temperature: data.temperature ?? 0.7,
           llmBaseUrl: data.llm_base_url || "",
         });
         setHasApiKey(data.has_api_key);
+        setStoredApiKey(apiKey);
       }).catch(() => {
         // Fallback to user object
         setForm({
@@ -144,7 +150,9 @@ export default function SettingsPage() {
         has_api_key: res.data.has_api_key,
       });
       setHasApiKey(res.data.has_api_key);
-      setForm((prev) => ({ ...prev, llmApiKey: "" }));
+      const newKey = res.data.llm_api_key || form.llmApiKey;
+      setStoredApiKey(newKey);
+      setForm((prev) => ({ ...prev, llmApiKey: newKey }));
       toast.success("Settings saved successfully!");
     } catch (e) {
       const detail = e?.response?.data?.detail || "Failed to save settings";
@@ -223,7 +231,9 @@ export default function SettingsPage() {
           has_api_key: saveRes.data.has_api_key,
         });
         setHasApiKey(saveRes.data.has_api_key);
-        setForm((prev) => ({ ...prev, llmApiKey: "" }));
+        const newKey = saveRes.data.llm_api_key || form.llmApiKey;
+        setStoredApiKey(newKey);
+        setForm((prev) => ({ ...prev, llmApiKey: newKey }));
         toast.success("Settings saved successfully!");
       } catch (e) {
         // Test passed but save failed — still show success for test
@@ -330,19 +340,33 @@ export default function SettingsPage() {
                 <label className="block text-sm font-medium text-gray-300 mb-1">
                   API Key
                 </label>
-                <input
-                  type="password"
-                  className="input-base"
-                  placeholder={
-                    hasApiKey
-                      ? "Leave blank to keep current key"
-                      : "Enter your API key"
-                  }
-                  value={form.llmApiKey}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, llmApiKey: e.target.value }))
-                  }
-                />
+                <div className="relative">
+                  <input
+                    type={showApiKey ? "text" : "password"}
+                    className="input-base pr-10"
+                    placeholder={
+                      hasApiKey
+                        ? "Leave blank to keep current key"
+                        : "Enter your API key"
+                    }
+                    value={form.llmApiKey}
+                    onChange={(e) =>
+                      setForm((prev) => ({ ...prev, llmApiKey: e.target.value }))
+                    }
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey((prev) => !prev)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 rounded-lg hover:bg-surface-700 text-gray-400 hover:text-white transition-colors"
+                    title={showApiKey ? "Hide API key" : "Show API key"}
+                  >
+                    {showApiKey ? (
+                      <EyeOff className="w-4 h-4" />
+                    ) : (
+                      <Eye className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
                 <p className="text-xs text-gray-500 mt-1">
                   {hasApiKey
                     ? "✓ API key is set. Enter a new one to replace it."

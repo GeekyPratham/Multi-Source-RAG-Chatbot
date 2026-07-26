@@ -21,7 +21,7 @@ def build_agent_prefix(history_text: str, source_lines: list[str]) -> str:
     if history_text:
         history_block = (
             "CONVERSATION HISTORY (most recent exchanges):\n"
-            f"{history_text}\n\n"
+            + history_text + "\n\n"
             "Use this history to resolve references like 'them', 'it', 'those'. "
             "If the question can be answered from history alone, do so WITHOUT calling tools.\n\n"
         )
@@ -49,7 +49,7 @@ def augment_prompt(prompt: str, history_text: str) -> str:
     if not history_text:
         return prompt
     return (
-        f"[CONVERSATION HISTORY]\n{history_text}\n\n"
-        f"[CURRENT QUESTION]\n{prompt}\n\n"
+        "[CONVERSATION HISTORY]\n" + history_text + "\n\n"
+        "[CURRENT QUESTION]\n" + prompt + "\n\n"
         "Resolve any references using the history above before choosing a tool."
     )

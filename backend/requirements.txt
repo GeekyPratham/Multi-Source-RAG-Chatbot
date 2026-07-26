@@ -48,3 +48,4 @@ cryptography>=42.0.0
 python-dotenv
 pydantic>=2.0.0
 httpx
+tenacity>=8.0.0

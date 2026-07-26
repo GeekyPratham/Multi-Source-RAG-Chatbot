@@ -110,25 +110,43 @@ class GenericOpenAIProvider(LLMProviderBase):
     """Generic OpenAI-compatible provider — works with any API that follows the OpenAI format."""
 
     async def ainvoke(self, messages: list[dict]) -> str:
+        from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
         import httpx
 
-        base_url = self.base_url or "https://api.openai.com/v1"
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(
-                f"{base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": self.temperature,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
+        def _is_rate_limit(e):
+            return isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429
+
+        @retry(
+            wait=wait_exponential(min=2, max=30),
+            stop=stop_after_attempt(4),
+            retry=retry_if_exception(_is_rate_limit),
+        )
+        async def _do_invoke():
+            base_url = self.base_url or "https://api.openai.com/v1"
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(
+                    f"{base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": messages,
+                        "temperature": self.temperature,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                # Handle different response formats (OpenAI-compatible, OpenRouter, etc.)
+                if "choices" in data and len(data["choices"]) > 0:
+                    return data["choices"][0]["message"]["content"]
+                elif "error" in data:
+                    raise ValueError(f"Provider error: {data['error'].get('message', str(data['error']))}")
+                else:
+                    raise ValueError(f"Unexpected response format from provider: {str(data)[:300]}")
+
+        return await _do_invoke()
 
 
 class AnthropicProvider(LLMProviderBase):

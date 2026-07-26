@@ -63,6 +63,7 @@ class SettingsResponse(BaseModel):
     has_api_key: bool
     display_name: Optional[str] = None
     llm_base_url: Optional[str] = None
+    llm_api_key: Optional[str] = None
 
 
 # ── Test Connection ────────────────────────────────────────────────────────────

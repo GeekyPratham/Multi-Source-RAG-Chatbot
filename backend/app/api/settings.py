@@ -14,6 +14,12 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 @router.get("", response_model=SettingsResponse)
 async def get_settings(current_user: User = Depends(get_current_user)):
     """Return the current user's LLM settings."""
+    decrypted_key = None
+    if current_user.llm_api_key_encrypted:
+        try:
+            decrypted_key = decrypt_api_key(current_user.llm_api_key_encrypted)
+        except Exception:
+            pass  # If decryption fails, just don't return the key
     return SettingsResponse(
         llm_provider=current_user.llm_provider,
         llm_model=current_user.llm_model,
@@ -21,6 +27,7 @@ async def get_settings(current_user: User = Depends(get_current_user)):
         has_api_key=bool(current_user.llm_api_key_encrypted),
         display_name=current_user.display_name,
         llm_base_url=current_user.llm_base_url,
+        llm_api_key=decrypted_key,
     )
 
 
@@ -54,6 +61,14 @@ async def update_settings(
 
     log.info("Settings updated for user %s", current_user.email)
 
+    # Decrypt the key to return it in the response
+    updated_decrypted_key = None
+    if current_user.llm_api_key_encrypted:
+        try:
+            updated_decrypted_key = decrypt_api_key(current_user.llm_api_key_encrypted)
+        except Exception:
+            pass
+
     return SettingsResponse(
         llm_provider=current_user.llm_provider,
         llm_model=current_user.llm_model,
@@ -61,6 +76,7 @@ async def update_settings(
         has_api_key=bool(current_user.llm_api_key_encrypted),
         display_name=current_user.display_name,
         llm_base_url=current_user.llm_base_url,
+        llm_api_key=updated_decrypted_key,
     )
 
 

@@ -23,6 +23,28 @@ from fastapi import Request
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifecycle: init DB, init Redis, and clean up connections on shutdown."""
+    # ── Warn about missing critical env vars before anything else ────────────
+    import os as _os
+    if not _os.getenv("ENCRYPTION_KEY"):
+        log.warning(
+            "\n" + "=" * 60 +
+            "\n[CRITICAL] ENCRYPTION_KEY is not set in .env!" +
+            "\n  A new random key is generated every restart." +
+            "\n  All stored API keys will be unreadable after each restart." +
+            "\n  Fix: run  python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\"" +
+            "\n  and set ENCRYPTION_KEY=<result> in backend/.env" +
+            "\n" + "=" * 60
+        )
+    jwt_key = _os.getenv("JWT_SECRET_KEY", "")
+    if not jwt_key or jwt_key == "change-this-in-production":
+        log.warning(
+            "\n" + "=" * 60 +
+            "\n[CRITICAL] JWT_SECRET_KEY is not set or is the default value!" +
+            "\n  All user sessions are invalidated on every restart." +
+            "\n  Fix: set JWT_SECRET_KEY=<random 32+ char string> in backend/.env" +
+            "\n" + "=" * 60
+        )
+
     log.info("Starting InsightAgent AI API — initializing database…")
     await init_db()
     

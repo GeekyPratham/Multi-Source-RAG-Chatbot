@@ -1,77 +1,96 @@
-# InsightAgent AI — Complete Development Guide for Beginners
+# InsightAgent AI — Complete Development & Architecture Guide
 
 ## Project Overview
 
 **InsightAgent AI** is a full-stack RAG (Retrieval-Augmented Generation) chatbot with:
-- **Multi-provider LLM support** (Groq, OpenAI, Anthropic)
-- **User authentication** with JWT tokens
-- **Document management** (PDFs, URLs)
-- **AI-powered research assistant** with web search, academic papers, Wikipedia
-- **Real-time session-based chat** with memory
-
-This guide walks you through the architecture, setup, and how to extend the system.
+- **Multi-provider LLM support** (Groq, OpenAI, Anthropic, DeepSeek, Mistral, Together, OpenRouter, Perplexity, Ollama, and any OpenAI-compatible API)
+- **User authentication** with JWT access/refresh token rotation
+- **Document management** (PDF uploads + URL scraping with RAG)
+- **AI-powered research agent** with web search, academic papers (Arxiv), Wikipedia, and custom source tools
+- **Session-based chat** with conversation memory
+- **Rate limiting** via Redis/Upstash
+- **API key encryption** at rest using Fernet
 
 ---
 
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     FRONTEND (React)                         │
-│  ┌────────────┬───────────────┬──────────────┬──────────────┐
-│  │ Login/Auth │ Settings      │ Chat Page    │ Recommender  │
-│  └──────┬─────┴───────────────┴──────────────┴──────────────┘
-│         │ HTTP/CORS                                          │
-└─────────┼──────────────────────────────────────────────────┘
-          │
-┌─────────▼──────────────────────────────────────────────────┐
-│              BACKEND (FastAPI + Python)                     │
-│                                                              │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  API Routes (FastAPI)                                │  │
-│  │  ├─ /api/auth        (signup, login, refresh, logout)  │  │
-│  │  ├─ /api/settings    (user LLM config)                 │  │
-│  │  ├─ /api/chat        (RAG agent)                       │  │
-│  │  ├─ /api/sources     (add URL/PDF, manage docs)        │  │
-│  │  └─ /api/recommend   (LLM recommendation)              │  │
-│  └──────┬───────────────────────────────────────────────┘  │
-│         │                                                    │
-│  ┌──────▼──────────────────────────────────────────────┐   │
-│  │  Services Layer (Business Logic)                    │   │
-│  │  ├─ auth_service.py      (JWT, passwords)          │   │
-│  │  ├─ agent_service.py     (LangChain + tools)       │   │
-│  │  ├─ providers.py         (LLM abstractions)        │   │
-│  │  ├─ embeddings.py        (vector embeddings)       │   │
-│  │  ├─ pdf_service.py       (PDF parsing)             │   │
-│  │  ├─ url_service.py       (web scraping)            │   │
-│  │  ├─ session_store.py     (memory + tools)          │   │
-│  │  └─ recommender_service.py (LLM recommendations)   │   │
-│  └──────┬──────────────────────────────────────────────┘   │
-│         │                                                    │
-│  ┌──────▼──────────────────────────────────────────────┐   │
-│  │  Core Layer (Models & DB)                           │   │
-│  │  ├─ models_db.py    (SQLAlchemy ORM tables)        │   │
-│  │  ├─ schemas.py      (Pydantic request/response)    │   │
-│  │  ├─ database.py     (PostgreSQL async setup)       │   │
-│  │  └─ memory.py       (conversation history)         │   │
-│  └──────┬──────────────────────────────────────────────┘   │
-│         │                                                    │
-│  ┌──────▼──────────────────────────────────────────────┐   │
-│  │  External Integrations                              │   │
-│  │  ├─ LangChain (agent, tools, memory)               │   │
-│  │  ├─ Groq/OpenAI/Anthropic APIs                     │   │
-│  │  ├─ Chroma (vector store)                          │   │
-│  │  ├─ DuckDuckGo, Arxiv, Wikipedia                   │   │
-│  │  └─ Redis (session state, refresh tokens)          │   │
-│  └──────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-          │
-┌─────────▼──────────────────────────────────────────────────┐
-│              DATABASES                                      │
-│  ├─ PostgreSQL (users, documents, chunks, tokens)          │
-│  ├─ Chroma    (vector embeddings for documents)            │
-│  └─ Redis     (session memory, refresh tokens)             │
-└──────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                        FRONTEND (React + Vite)                      │
+│  ┌────────────┬───────────────┬──────────────┬──────────────────┐  │
+│  │ Login/Signup│ Settings      │ Chat Page    │ Recommender      │  │
+│  │ Pages      │ (API Key,     │ (Agent with  │ (LLM             │  │
+│  │            │  Provider,    │  Tools,       │  Recommendation) │  │
+│  │            │  Model Config)│  Sources)     │                  │  │
+│  └──────┬─────┴───────┬───────┴──────┬───────┴────────┬─────────┘  │
+│         │             │              │                │            │
+│         └─────────────┴──────────────┴────────────────┘            │
+│                         Axios HTTP Client                          │
+│                     Auto-refresh on 401                            │
+└─────────────────────────────────────────────────────────────────────┘
+         │
+         │ HTTP (localhost:5173 → localhost:8000 via Vite proxy)
+         ▼
+┌─────────────────────────────────────────────────────────────────────-┐
+│                    BACKEND (FastAPI + Python 3.11)                   │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────-┐   │
+│  │  API Routes                   │  Middleware                   │   │
+│  │  ├─ /api/auth/*               │  ├─ JWT Auth (get_current_)   │   │
+│  │  │  signup, login, logout,    │  ├─ Rate Limit (Redis)        │   │
+│  │  │  refresh/v2, me            │  └─ CORS                      │   │
+│  │  ├─ /api/settings             │                               │   │
+│  │  │  GET (read), PUT (update), │                               │   │
+│  │  │  POST /test (connection)   │                               │   │
+│  │  ├─ /api/chat                 │                               │   │
+│  │  │  POST (RAG agent)          │                               │   │
+│  │  ├─ /api/sources/*            │                               │   │
+│  │  │  URL, PDF, list, delete    │                               │   │
+│  │  └─ /api/recommend            │                               │   │
+│  │     POST (LLM recommendations)│                               │   │
+│  └───────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  Services Layer (Business Logic)                             │   │
+│  │  ├─ auth_service.py     JWT, refresh tokens, passwords       │   │
+│  │  ├─ agent_service.py    LangChain agent, tool orchestration  │   │
+│  │  ├─ providers.py        LLM abstractions + tenacity retry   │   │
+│  │  ├─ pdf_service.py      PDF → chunks → Chroma → tool        │   │
+│  │  ├─ url_service.py      URL → scrape → chunks → Chroma→tool │   │
+│  │  ├─ session_store.py    In-memory per-session tool registry  │   │
+│  │  ├─ vector_store.py     ChromaDB integration                 │   │
+│  │  ├─ redis_service.py    Upstash/local Redis abstraction      │   │
+│  │  └─ recommender_service.py  LLM recommendations              │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  Core Layer (Models, DB, Schemas)                            │   │
+│  │  ├─ models_db.py     SQLAlchemy ORM (User, Doc, Chunk, RT)  │   │
+│  │  ├─ models.py        Pydantic request schemas               │   │
+│  │  ├─ schemas.py       Pydantic response schemas              │   │
+│  │  ├─ database.py      PostgreSQL async engine                 │   │
+│  │  └─ memory.py        Conversation history formatting         │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  External Integrations                                       │   │
+│  │  ├─ LangChain (agent, tools, retrievers)                     │   │
+│  │  ├─ 9+ LLM provider APIs via direct HTTP or SDK              │   │
+│  │  ├─ ChromaDB (persistent vector store)                       │   │
+│  │  ├─ DuckDuckGo, Arxiv, Wikipedia (built-in tools)            │   │
+│  │  ├─ Upstash Redis (rate limiting, refresh tokens)            │   │
+│  │  └─ sentence-transformers (embeddings)                       │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+         │
+         ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  DATABASES & STORAGE                                               │
+│  ├─ PostgreSQL (Neon.tech) — users, documents, chunks, tokens     │
+│  ├─ ChromaDB (local filesystem) — vector embeddings for RAG       │
+│  └─ Upstash Redis — session state, rate limit counters, tokens    │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -79,755 +98,655 @@ This guide walks you through the architecture, setup, and how to extend the syst
 ## Database Schema (PostgreSQL)
 
 ```sql
--- Users table
+-- Users table — stores account + LLM configuration
 users (
-  id: UUID (PK),
-  email: VARCHAR (unique),
-  password_hash: VARCHAR,
-  display_name: VARCHAR,
-  llm_provider: ENUM (groq|openai|anthropic) -- nullable
-  llm_api_key_encrypted: TEXT,
-  llm_model: VARCHAR,                        -- nullable
+  id: UUID (PK, auto-gen),
+  email: VARCHAR(255) (unique, indexed),
+  password_hash: VARCHAR(255),
+  display_name: VARCHAR(100),                  -- nullable
+  llm_provider: VARCHAR(50),                   -- nullable, free-text (groq, openai, deepseek, etc.)
+  llm_api_key_encrypted: TEXT,                 -- nullable, Fernet-encrypted
+  llm_model: VARCHAR(100),                     -- nullable
   temperature: FLOAT (default 0.7),
-  created_at: TIMESTAMP,
-  updated_at: TIMESTAMP
+  llm_base_url: VARCHAR(500),                  -- nullable, for custom endpoints
+  created_at: TIMESTAMPTZ,
+  updated_at: TIMESTAMPTZ
 )
 
 -- Documents (uploaded PDFs / added URLs)
 documents (
   id: UUID (PK),
-  user_id: UUID (FK),
-  title: VARCHAR,
-  source_type: VARCHAR (url|pdf),
-  source_uri: TEXT,
-  source_hash: VARCHAR (SHA-256),
-  chunk_count: INT,
-  created_at: TIMESTAMP
+  user_id: UUID (FK → users.id),
+  title: VARCHAR(500),
+  source_type: VARCHAR(10) ("url" | "pdf"),
+  source_uri: TEXT,                            -- URL or original filename
+  source_hash: VARCHAR(64),                    -- SHA-256 for per-user dedup
+  chunk_count: INT (default 0),
+  created_at: TIMESTAMPTZ,
+  UNIQUE(user_id, source_hash)                 -- one user cannot have same doc twice
 )
 
 -- Chunks (document pieces for RAG)
 chunks (
   id: UUID (PK),
-  doc_id: UUID (FK),
+  doc_id: UUID (FK → documents.id),
   chunk_index: INT,
-  content_hash: VARCHAR,
+  content_hash: VARCHAR(64),                   -- SHA-256 of chunk text
   text: TEXT,
-  metadata_json: JSONB
+  metadata_json: JSONB,                        -- nullable
 )
 
--- Refresh tokens (JWT rotation)
+-- Refresh tokens (JWT rotation audit)
 refresh_tokens (
   id: UUID (PK),
-  user_id: UUID (FK),
-  token_hash: VARCHAR (unique),
-  expires_at: TIMESTAMP,
-  created_at: TIMESTAMP
+  user_id: UUID (FK → users.id),
+  token_hash: VARCHAR(128) (unique),
+  expires_at: TIMESTAMPTZ,
+  created_at: TIMESTAMPTZ
 )
 ```
 
 ---
 
-## User Flow (End-to-End)
+## Complete User Flow (End-to-End)
 
-### 1. **Authentication Flow**
+### 1. Authentication Flow
 
 ```
 ┌─────────┐
-│ Signup  │
+│ SIGNUP  │
 └────┬────┘
      │ POST /api/auth/signup
      │ { email, password, display_name }
      ▼
-[Backend validates + creates user with NULL llm_provider/model]
-     │
-     ├─ Hash password (bcrypt)
-     ├─ Create User in DB
-     ├─ Generate JWT access_token (15 min)
-     ├─ Generate refresh_token (7 days) → store in Redis + DB
-     └─ Return { access_token, refresh_token, user }
-     │
-     ▼
-[Frontend stores tokens in localStorage]
-     │
-     ├─ localStorage['insightagent_access_token']
-     ├─ localStorage['insightagent_refresh_token']
-     └─ localStorage['insightagent_user_id']
+[Backend]
+  ├─ Validate email format + password length (≥8 chars)
+  ├─ Hash password with bcrypt
+  ├─ Create User row in PostgreSQL
+  ├─ Generate JWT access_token (15 min expiry)
+  ├─ Generate refresh_token (7 days expiry)
+  │  ├─ Store hash in refresh_tokens table (DB)
+  │  └─ Store raw token in Redis (for fast lookup)
+  └─ Return { access_token, refresh_token, user }
      │
      ▼
+[Frontend]
+  ├─ Store access_token → localStorage['insightagent_access_token']
+  ├─ Store refresh_token → localStorage['insightagent_refresh_token']
+  ├─ Store user_id → localStorage['insightagent_user_id']
+  └─ Redirect to /settings (first-time setup)
+
+
 ┌─────────┐
-│ Login   │
+│ LOGIN   │
 └────┬────┘
      │ POST /api/auth/login
      │ { email, password }
      ▼
-[Backend verifies password + issues tokens]
+[Backend]
+  ├─ Look up user by email
+  ├─ Verify password with bcrypt
+  ├─ Issue new token pair
+  └─ Return { access_token, refresh_token, user }
+
+┌───────────┐
+│ TOKEN     │
+│ REFRESH   │
+└────┬──────┘
+     │ POST /api/auth/refresh/v2
+     │ { refresh_token, user_id }
+     │ (Triggered automatically by frontend on 401)
+     ▼
+[Backend]
+  ├─ Look up token hash in Redis
+  ├─ Verify against DB record
+  ├─ Rotate: invalidate old token, issue new pair
+  └─ Return { access_token, refresh_token }
+
+┌───────────┐
+│ LOGOUT    │
+└────┬──────┘
+     │ POST /api/auth/logout
+     ▼
+[Backend]
+  ├─ Delete refresh token from Redis
+  ├─ Delete from DB
+  └─ (Frontend clears localStorage)
 ```
 
-### 2. **Settings Configuration (Required Before Chat)**
+### 2. Settings Configuration
 
 ```
 ┌──────────────────────┐
-│ Settings Page        │
+│ /settings page       │
 └────┬─────────────────┘
      │
-     │ User enters:
-     │ • LLM Provider (groq, openai, anthropic)
-     │ • API Key (encrypted before storage)
-     │ • Model Name (e.g., "llama-3.3-70b-versatile")
-     │ • Temperature (0.0 - 2.0)
-     │
-     ▼ PUT /api/settings
-     │ { llm_provider, llm_api_key, llm_model, temperature }
-     │
-[Backend encrypts API key + updates user]
-     │
-     ├─ encrypt_api_key(api_key) → store in DB
-     ├─ Update llm_provider, llm_model, temperature
-     └─ Return { llm_provider, llm_model, has_api_key, ... }
-     │
+     │ GET /api/settings (on page load)
      ▼
-┌──────────────────────┐
-│ Credentials Saved!   │
-│ Ready for Chat       │
-└──────────────────────┘
+[Backend returns current config]
+  └─ { llm_provider, llm_model, temperature, has_api_key,
+       display_name, llm_base_url, llm_api_key (decrypted) }
+
+     │
+     │ User fills in:
+     │ • Display Name
+     │ • Provider (free text: groq, openai, deepseek, etc.)
+     │ • API Key 🔒 (masked by default, eye button to toggle)
+     │ • Model Name
+     │ • Temperature slider (0.0 - 2.0)
+     │ • Base URL (optional, for custom endpoints)
+     │
+     │ PUT /api/settings
+     │ { llm_provider, llm_api_key, llm_model, temperature, ... }
+     ▼
+[Backend]
+  ├─ Encrypt API key with Fernet: encrypt_api_key(plaintext)
+  ├─ Store encrypted key in DB
+  ├─ Save provider, model, temperature, base_url
+  ├─ Decrypt and return the key in response
+  └─ Return updated SettingsResponse
+
+     │
+     │ (Optional) POST /api/settings/test
+     │ { llm_provider, llm_api_key, llm_model, llm_base_url }
+     ▼
+[Backend]
+  ├─ Send a test message "Respond with just the word OK"
+  ├─ If success: "✓ {Provider} connection successful!"
+  └─ If fail: specific error message
 ```
 
-### 3. **Document Management (Optional)**
+### 3. Source / Document Management
 
 ```
 ┌─────────────────────────┐
-│ Add URL / Upload PDF    │
+│ Sources Panel (sidebar) │
 └────┬────────────────────┘
      │
-     ├─ URL: POST /api/sources/url { url, session_id }
-     │  ├─ Scrape web page (BeautifulSoup)
-     │  ├─ Extract text
-     │  ├─ Split into chunks (overlapping)
-     │  ├─ Generate embeddings (Sentence Transformers)
-     │  ├─ Store in Chroma (vector DB)
-     │  ├─ Save chunks in PostgreSQL
+     ├─ Add URL: POST /api/sources/url
+     │  { url: "https://...", session_id }
+     │
+     │  [Backend]
+     │  ├─ Validate URL
+     │  ├─ Scrape webpage (WebBaseLoader / BeautifulSoup)
+     │  ├─ Split into 1000-char chunks (200 overlap)
+     │  ├─ Generate embeddings (sentence-transformers/all-MiniLM-L6-v2)
+     │  ├─ Store in ChromaDB (persistent, collection named url_<hash>)
+     │  ├─ Save Document + Chunks in PostgreSQL
+     │  ├─ Create LangChain retriever tool → "URL_Source_{N}"
+     │  ├─ Register in session_store
      │  └─ Return { success, title, message }
      │
-     └─ PDF: POST /api/sources/pdf { file, session_id }
-        ├─ Parse PDF (PyPDF)
-        ├─ Extract text
-        ├─ Split into chunks
+     └─ Upload PDF: POST /api/sources/pdf
+        FormData: { file: <binary>, session_id }
+
+        [Backend]
+        ├─ Save to temp file
+        ├─ Parse with PyPDFLoader
+        ├─ Split into 1000-char chunks (200 overlap)
         ├─ Generate embeddings
-        ├─ Store in Chroma + PostgreSQL
+        ├─ Store in ChromaDB (persistent, collection named pdf_<name>_<hash>)
+        ├─ Save Document + Chunks in PostgreSQL
+        ├─ Create LangChain retriever tool → "PDF_Source_{N}"
+        ├─ Register in session_store
         └─ Return { success, filename, message }
+
      │
-     ▼
-[Documents stored in session context for RAG]
+     └─ List sources: GET /api/sources/list?session_id=...
+        └─ Return list of URL/PDF sources with metadata
+
+     └─ Delete source: DELETE /api/sources/url?url=...&session_id=...
+                          DELETE /api/sources/pdf?filename=...&session_id=...
+        └─ Remove from session_store
 ```
 
-### 4. **Chat with RAG Agent**
+### 4. Chat with RAG Agent (Full Detailed Flow)
 
 ```
-┌──────────────────────────────────┐
-│ User Types Message in Chat       │
-└────┬─────────────────────────────┘
-     │ POST /api/chat
-     │ {
-     │   message: "What is...?",
-     │   model_name: "llama-3.3-70b-versatile",
-     │   session_id: "default",
-     │   history: [...],
-     │   memory_turns: 6,
-     │   temperature: 0.7
-     │ }
-     │
-     ▼ [Backend: Agent Service]
-     │
-     ├─ Retrieve user's stored provider/API key/model
-     ├─ Build LLM client (ChatGroq, OpenAI SDK, etc.)
-     ├─ Initialize LangChain Agent with tools:
-     │  ├─ DuckDuckGo (web search)
-     │  ├─ Arxiv (academic papers)
-     │  ├─ Wikipedia
-     │  ├─ Custom tools (from user's documents)
-     │  └─ Memory (conversation history)
-     │
-     ├─ Build prompt:
-     │  ├─ System instructions
-     │  ├─ Conversation history (last 6 turns)
-     │  ├─ Source context (from uploaded docs/URLs)
-     │  └─ User's current message
-     │
-     ├─ Run agent (ZERO_SHOT_REACT loop):
-     │  │ Thought: I need to search for...
-     │  │ Action: DuckDuckGo_Search
-     │  │ Observation: [search results]
-     │  │ ...repeat until Final Answer
-     │
-     ├─ Extract intermediate steps (tools used)
-     └─ Return {
-         answer: "The answer is...",
-         tool_steps: [...],
-         tools_used: ["DuckDuckGo", "Wikipedia"],
-         answered_from_history: false
-       }
-     │
+┌──────────────────────────────────────┐
+│ User types message in Chat Page      │
+│ "What is NLP?"                       │
+│ (with 2 URLs + 2 PDFs already added) │
+└──────────────┬───────────────────────┘
+               │
+               ▼
+[Frontend: ChatPage.jsx]
+  ├─ Generate or load session_id (UUID)
+  ├─ Build payload:
+  │  { message, session_id, history, model_name,
+  │    provider, api_key, temperature, memory_turns }
+  └─ POST /api/chat
+               │
+               ▼
+[Backend: chat.py]
+  ├─ If user is authenticated AND no explicit api_key:
+  │  ├─ Load stored provider/model/key from DB
+  │  └─ Decrypt API key
+  └─ Call run_agent(req)
+               │
+               ▼
+[Backend: agent_service.py → run_agent()]
+  │
+  ├─ 1. BUILD CONTEXT
+  │  ├─ build_history_text(history, max_turns=6)
+  │  │  └─ Formats last 6 messages as "Human: ...\nAssistant: ..."
+  │  ├─ get_source_lines(session_id)
+  │  │  └─ Lists custom sources: "• URL_Source_1 → Webpage: '...' (url)"
+  │  │                           "• PDF_Source_1 → PDF: 'filename.pdf'"
+  │  ├─ get_all_tools(session_id)
+  │  │  └─ Returns LangChain tool objects for each source
+  │  └─ Combine with base tools: DuckDuckGo + Arxiv + Wikipedia
+  │
+  ├─ 2. BUILD LLM
+  │  └─ _build_chat_model(provider, api_key, model, temp, base_url)
+  │     ├─ Groq → ChatGroq (LangChain SDK)
+  │     ├─ OpenAI → OpenAIProvider (direct HTTP via httpx)
+  │     ├─ Anthropic → AnthropicProvider
+  │     └─ Everything else → GenericOpenAIProvider (with tenacity retry)
+  │
+  ├─ 3. SMART TOOL CHECK
+  │  └─ _needs_tools(message, history, has_custom_sources)
+  │     ├─ Greetings ("hi", "hello") → SKIP agent, direct query only
+  │     ├─ Identity questions ("what is my name") → SKIP agent
+  │     ├─ Has custom sources (PDFs/URLs) → USE agent with tools
+  │     └─ Everything else → USE agent with tools
+  │
+  ├─ 4. BUILD AGENT PROMPT (if tools needed)
+  │  ├─ build_agent_prefix(history, source_lines)
+  │  │  ├─ "You are InsightAgent, a helpful research assistant..."
+  │  │  ├─ "CONVERSATION HISTORY: ..."
+  │  │  ├─ "Custom knowledge sources loaded: ..."
+  │  │  ├─ "Call the matching tool FIRST for questions about these sources"
+  │  │  └─ Lists all available tools
+  │  ├─ augment_prompt(message, history)
+  │  │  └─ "[CONVERSATION HISTORY]\n...\n[CURRENT QUESTION]\n..."
+  │  └─ Initialize LangChain agent (ZERO_SHOT_REACT_DESCRIPTION)
+  │     ├─ max_iterations=4
+  │     ├─ early_stopping_method="generate"
+  │     └─ handle_parsing_errors=True
+  │
+  ├─ 5. RUN AGENT LOOP
+  │  └─ agent.ainvoke({"input": augmented_message})
+  │
+  │     ┌────────────────────────────────────────────────┐
+  │     │  ZERO_SHOT_REACT LOOP                          │
+  │     │                                                │
+  │     │  Iteration 1:                                  │
+  │     │   Thought: "I need to check the custom sources"│
+  │     │   Action: URL_Source_1                         │
+  │     │   Action Input: "What is NLP"                  │
+  │     │   Observation: "NLP is a subfield of AI..."    │
+  │     │                                                │
+  │     │  Iteration 2:                                  │
+  │     │   Thought: "Let me also check the PDF"         │
+  │     │   Action: PDF_Source_1                         │
+  │     │   Action Input: "core concepts of NLP"         │
+  │     │   Observation: "Core concepts include..."      │
+  │     │                                                │
+  │     │  Iteration 3:                                  │
+  │     │   Thought: "I have enough info. Answering."    │
+  │     │   Final Answer: "NLP is..."                    │
+  │     └────────────────────────────────────────────────┘
+  │
+  ├─ 6. HANDLE ERRORS (if agent fails)
+  │  ├─ Log the actual error type + message
+  │  ├─ Try fallback: direct query without tools
+  │  │  └─ _direct_query(llm, message, history)
+  │  └─ If fallback also fails:
+  │     ├─ OutputParserException → "The model had trouble formatting..."
+  │     ├─ RateLimitError / 429 → "Rate limit exceeded..."
+  │     ├─ Timeout → "The model took too long..."
+  │     └─ Other → "Something went wrong: {ErrorType}..."
+  │
+  ├─ 7. BUILD RESPONSE
+  │  ├─ answer = result.get("output", "")
+  │  ├─ steps = result.get("intermediate_steps", [])
+  │  ├─ For each step → ToolStep { step, tool, tool_input, observation }
+  │  └─ Return ChatResponse { answer, tool_steps, tools_used,
+  │                            answered_from_history }
+  │
+  └─ Send response to frontend
+               │
+               ▼
+[Frontend: ChatPage.jsx]
+  ├─ Display assistant answer
+  ├─ Show tool calls with icons:
+  │  📖 Wikipedia | 🌐 URL_Source_1 | 📕 PDF_Source_1
+  │  🔍 DuckDuckGo_Search | 🔧 _Exception
+  └─ Append to conversation history
+```
+
+### 5. Recommender Feature
+
+```
+┌──────────────────────┐
+│ /recommend page      │
+└────┬─────────────────┘
+     │ POST /api/recommend
+     │ { query: "I need an LLM for code generation" }
      ▼
-[Frontend displays answer + sources]
+[Backend]
+  ├─ Build prompt asking LLM to recommend itself
+  ├─ Send to user's configured provider
+  └─ Return { recommendations, top_pick, reasoning }
 ```
 
 ---
 
-## Step-by-Step Development Guide
+## Tool Selection Priority (How the LLM Chooses)
 
-### **Phase 1: Foundation (Week 1-2)**
+The LLM does NOT follow a hardcoded priority. It decides based on the prompt:
 
-#### 1.1 Set Up Development Environment
+| Prompt Section | What it tells the LLM |
+|----------------|----------------------|
+| "Custom knowledge sources loaded: ... Call the matching tool FIRST" | Prioritize user's PDFs/URLs |
+| "CONVERSATION HISTORY: ... If answerable from history, do so WITHOUT calling tools" | Use memory first |
+| Tool descriptions | Each tool has a name + description |
+| "You have access to the following tools:" | Lists DuckDuckGo, Arxiv, Wikipedia as fallbacks |
+
+**Typical decision flow for "what is NLP" with 2 URLs + 2 PDFs:**
+
+1. 🤔 "User has custom NLP sources → check those first"
+2. → Calls `URL_Source_1` → gets IBM article text
+3. → Calls `PDF_Source_1` → gets PDF content  
+4. → Calls `Wikipedia` (supplemental) → gets general definition
+5. ✅ Synthesizes final answer from all sources
+
+---
+
+## File Tree (Actual Project Structure)
+
+```
+multitool-ai-chatbot/
+├── docker-compose.yml
+├── README.md
+├── README_FULL_GUIDE.md          ← This file
+├── TASK_PROGRESS.md
+│
+├── backend/
+│   ├── .env                      # Secrets (DB URL, JWT key, etc.)
+│   ├── .env.example
+│   ├── .gitignore
+│   ├── .python-version           # Python 3.11
+│   ├── Dockerfile
+│   ├── main.py                   # FastAPI app entry point
+│   ├── pyproject.toml
+│   ├── requirements.txt          # All Python dependencies
+│   ├── uv.lock
+│   ├── logs/                     # Application logs
+│   ├── vector_store/             # ChromaDB persistent storage
+│   │
+│   └── app/
+│       ├── __init__.py
+│       │
+│       ├── api/                  # HTTP endpoints
+│       │   ├── auth.py           # /api/auth/* (signup, login, logout, refresh, me)
+│       │   ├── chat.py           # /api/chat (RAG agent)
+│       │   ├── settings.py       # /api/settings (GET, PUT, POST /test)
+│       │   ├── sources.py        # /api/sources/* (URL, PDF, list, delete)
+│       │   └── recommend.py      # /api/recommend
+│       │
+│       ├── core/                 # Models, DB, schemas
+│       │   ├── models_db.py      # SQLAlchemy ORM (User, Document, Chunk, RefreshToken)
+│       │   ├── models.py         # Pydantic request models (ChatRequest, etc.)
+│       │   ├── schemas.py        # Pydantic response schemas (SettingsResponse, etc.)
+│       │   ├── database.py       # PostgreSQL async engine + session
+│       │   └── memory.py         # Conversation history formatters
+│       │
+│       ├── services/             # Business logic
+│       │   ├── auth_service.py        # JWT, password hashing, refresh tokens
+│       │   ├── agent_service.py       # LangChain agent orchestration
+│       │   ├── providers.py           # LLM abstractions (9+ providers) + retry
+│       │   ├── session_store.py       # In-memory per-session tool registry
+│       │   ├── pdf_service.py         # PDF → chunks → Chroma → tool
+│       │   ├── url_service.py         # URL → scrape → chunks → Chroma → tool
+│       │   ├── vector_store.py        # ChromaDB integration
+│       │   ├── redis_service.py       # Upstash/local Redis abstraction
+│       │   └── recommender_service.py # LLM recommendation logic
+│       │
+│       ├── middleware/            # Request/response middleware
+│       │   ├── auth.py           # JWT extraction & validation
+│       │   └── ratelimit.py      # Rate limiting (60 req/min per user)
+│       │
+│       └── utils/
+│           └── logger.py         # Structured logging
+│
+└── frontend/
+    ├── .env                      # VITE_API_URL (empty = use proxy)
+    ├── .env.example
+    ├── Dockerfile
+    ├── index.html
+    ├── nginx.conf                # Production nginx config
+    ├── package.json
+    ├── postcss.config.js
+    ├── tailwind.config.js
+    ├── vite.config.js            # Dev proxy: /api → localhost:8000
+    │
+    └── src/
+        ├── main.jsx              # React entry point
+        ├── App.jsx               # Router + Layout
+        │
+        ├── pages/                # Full-page components
+        │   ├── LoginPage.jsx     # Login form
+        │   ├── SignupPage.jsx    # Registration form
+        │   ├── ChatPage.jsx      # Main chat interface
+        │   ├── SettingsPage.jsx  # LLM config (provider, key, model)
+        │   ├── RecommendPage.jsx # LLM recommendation tool
+        │   └── ApiKeyGate.jsx    # Guard page if no API key set
+        │
+        ├── components/
+        │   ├── chat/
+        │   │   ├── ModelSelector.jsx  # Provider/model dropdown
+        │   │   └── SourcesPanel.jsx   # URL/PDF source manager
+        │   └── layout/
+        │       └── Layout.jsx         # Sidebar + main content
+        │
+        ├── hooks/
+        │   └── useAuth.jsx       # Auth context (user, login, logout, refresh)
+        │
+        └── services/
+            └── api.js            # Axios client + auto-refresh interceptor
+```
+
+---
+
+## Supported LLM Providers
+
+| Provider Name | Base URL (auto-detected) | Requires Base URL | Notes |
+|--------------|--------------------------|-------------------|-------|
+| `groq` | `https://api.groq.com/openai/v1` | No | Fast inference, free tier available |
+| `openai` | `https://api.openai.com/v1` | No | GPT-4, GPT-3.5 |
+| `anthropic` | `https://api.anthropic.com/v1` | Yes (uses Anthropic format) | Claude models |
+| `claude` | `https://api.anthropic.com/v1` | Yes (uses Anthropic format) | Alias for Anthropic |
+| `deepseek` | `https://api.deepseek.com/v1` | No | Very cheap, good quality |
+| `mistral` | `https://api.mistral.ai/v1` | No | Mistral models |
+| `together` | `https://api.together.xyz/v1` | No | Many open models |
+| `openrouter` | `https://openrouter.ai/api/v1` | No | Access to 200+ models |
+| `perplexity` | `https://api.perplexity.ai` | No | Perplexity models |
+| `ollama` | (user provides) | Yes | Local models, e.g. `http://localhost:11434/v1` |
+| *any custom* | (user provides) | Yes | Any OpenAI-compatible API |
+
+---
+
+## Key Features Implemented
+
+### Recent Fixes & Improvements
+
+| Feature | File(s) | Description |
+|---------|---------|-------------|
+| **API Key Eye Toggle** | `SettingsPage.jsx`, `schemas.py`, `settings.py` | Eye button to show/hide API key; key fetched from DB on page load |
+| **Tenacity Retry** | `providers.py`, `requirements.txt` | Auto-retry 429 errors with 2s→4s→8s→16s backoff |
+| **Smart Tool Detection** | `agent_service.py` | Skip agent for greetings/simple questions, saves rate limits |
+| **F-String Safety** | `memory.py`, `agent_service.py` | Replaced f-strings with concatenation to prevent `} crash` |
+| **Better Error Messages** | `agent_service.py` | Distinguishes parse errors, rate limits, timeouts |
+| **Reduced Iterations** | `agent_service.py` | `max_iterations` 6→4 to reduce rate limit usage |
+| **Event Loop Fix** | `agent_service.py` | Threaded fallback for sync _call inside async context |
+| **OpenRouter Response Fix** | `providers.py` | Handle missing `choices` key in response |
+
+### Security Features
+
+- **API keys encrypted at rest** using Fernet (symmetric encryption)
+- **JWT access tokens** (15 min expiry) with refresh token rotation
+- **Refresh tokens** stored hashed in DB + Redis for fast lookup
+- **Rate limiting**: 60 requests/minute per user via Redis/Upstash
+- **Password hashing** with bcrypt
+- **CORS** configured for frontend origin only
+
+---
+
+## Local Development Setup
+
+### Prerequisites
+- Python 3.11+
+- Node.js 20+
+- PostgreSQL (or Neon.tech account)
+- Redis (or Upstash account)
+
+### Backend Setup
 
 ```bash
-# Backend setup
 cd backend
+
+# Create virtual environment
 python -m venv .venv
-.venv\Scripts\activate  # Windows
-source .venv/bin/activate  # macOS/Linux
+.venv\Scripts\activate        # Windows
+source .venv/bin/activate     # macOS/Linux
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Frontend setup
-cd ../frontend
+# Configure .env (copy from .env.example)
+# Required: DATABASE_URL, JWT_SECRET_KEY, ENCRYPTION_KEY
+# Optional: UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
+
+# Run database migrations (auto-create tables on startup)
+# Start the server
+uvicorn main:app --reload --port 8000
+# or: uv run uvicorn main:app --reload --port 8000
+```
+
+### Frontend Setup
+
+```bash
+cd frontend
 npm install
+npm run dev
+# Opens at http://localhost:5173
+# Proxies /api/* to http://localhost:8000
 ```
 
-#### 1.2 Database & Environment
-
-Create `.env` file in `backend/`:
+### Environment Variables (backend/.env)
 
 ```bash
-DATABASE_URL=postgresql+asyncpg://user:password@localhost:5432/insightagent
+# Database (PostgreSQL with pgvector)
+DATABASE_URL=postgresql://user:pass@host:5432/db?sslmode=require
+
+# Redis (for refresh tokens and rate limiting)
 REDIS_URL=redis://localhost:6379/0
-JWT_SECRET_KEY=your-secret-key-change-in-production
-ENCRYPTION_KEY=your-fernet-key-or-will-be-auto-generated
+UPSTASH_REDIS_REST_URL="https://your-upstash-url.upstash.io"
+UPSTASH_REDIS_REST_TOKEN="your-upstash-token"
+
+# JWT Authentication
+JWT_SECRET_KEY=your-random-secret-at-least-32-chars
+JWT_ACCESS_EXPIRE_MIN=15
+JWT_REFRESH_EXPIRE_DAYS=7
+
+# API Key Encryption (Fernet)
+# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+ENCRYPTION_KEY=your-fernet-key
+
+# CORS
+ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000
 ```
 
-Start PostgreSQL and Redis:
+---
+
+## Docker Deployment
 
 ```bash
-# PostgreSQL (Docker)
-docker run -d -e POSTGRES_USER=insightagent -e POSTGRES_PASSWORD=insightagent -e POSTGRES_DB=insightagent -p 5432:5432 postgres:15
+# Build and run with docker-compose
+docker-compose up --build
 
-# Redis (Docker)
-docker run -d -p 6379:6379 redis:7
+# Services:
+# - backend (FastAPI) on port 8000
+# - frontend (Nginx) on port 80
+# - PostgreSQL on port 5432
+# - Redis on port 6379
 ```
 
-#### 1.3 **FIRST: Build Authentication System**
-
-**Why first?** Because every other endpoint needs user identity.
-
-**Files to create/edit:**
-
-1. **`app/core/models_db.py`** — User model
-   ```python
-   class User(Base):
-       id: UUID
-       email: str (unique)
-       password_hash: str
-       llm_provider: str (nullable)
-       llm_api_key_encrypted: str (nullable)
-       llm_model: str (nullable)
-       temperature: float
-   ```
-
-2. **`app/services/auth_service.py`** — JWT + password
-   - `hash_password()` / `verify_password()` (bcrypt)
-   - `create_access_token()` (JWT)
-   - `issue_refresh_token()` (Redis + DB)
-   - `decrypt_api_key()` (Fernet encryption)
-
-3. **`app/api/auth.py`** — Endpoints
-   - `POST /api/auth/signup` — create user
-   - `POST /api/auth/login` — verify password, return tokens
-   - `POST /api/auth/logout` — invalidate tokens
-   - `GET /api/auth/me` — return current user
-
-4. **`app/middleware/auth.py`** — JWT validation
-   - `get_current_user()` — extract + validate Bearer token
-   - `get_optional_user()` — optional auth
-
-5. **Frontend: `src/pages/LoginPage.jsx` + `SignupPage.jsx`**
-   - Form to enter email/password
-   - POST to `/api/auth/signup` or `/api/auth/login`
-   - Store tokens in localStorage
-
-6. **Frontend: `src/hooks/useAuth.jsx`**
-   - Context to manage user state globally
-   - Auto-refresh tokens on expiry
-
-**Test:**
-```bash
-# Backend: Start server
-cd backend && uv run uvicorn main:app --reload
-
-# Frontend: Dev server
-cd frontend && npm run dev
-
-# Test in browser: http://localhost:5173
-# 1. Signup
-# 2. Login
-# 3. Verify localStorage has tokens
-```
+### docker-compose.yml structure:
+- **backend**: Python FastAPI with uvicorn
+- **frontend**: Nginx serving built React app + proxying /api to backend
+- **db**: PostgreSQL 15 with pgvector
+- **redis**: Redis 7 for rate limiting + sessions
 
 ---
 
-### **Phase 2: User Settings & LLM Configuration (Week 2-3)**
-
-#### 2.1 **Settings Endpoint**
-
-**Files:**
-
-1. **`app/api/settings.py`** — Endpoints
-   ```
-   GET  /api/settings           → return current user's LLM config
-   PUT  /api/settings           → update provider/model/api_key
-   POST /api/settings/test      → test LLM connection
-   ```
-
-2. **`app/services/providers.py`** — LLM abstractions
-   - `GroqProvider` class
-   - `OpenAIProvider` class
-   - `AnthropicProvider` class
-   - `get_provider(name)` → returns correct class
-
-3. **Frontend: `src/pages/SettingsPage.jsx`**
-   - Dropdown: select provider (Groq, OpenAI, Anthropic)
-   - Input: paste API key (masked)
-   - Dropdown: select model (based on provider)
-   - Slider: temperature (0.0 - 2.0)
-   - Button: "Test Connection"
-
-**Test:**
-```bash
-# Go to /settings
-# 1. Select provider = "groq"
-# 2. Enter Groq API key
-# 3. Select model = "llama-3.3-70b-versatile"
-# 4. Click "Test Connection"
-# 5. Verify: "Connection successful!"
-```
-
----
-
-### **Phase 3: Core Chat System (Week 3-4)**
-
-#### 3.1 **Build the RAG Agent**
-
-**Files:**
-
-1. **`app/core/memory.py`** — Conversation history
-   - `build_history_text()` — format past messages
-   - `build_agent_prefix()` — system prompt
-   - `augment_prompt()` — add context to user message
-
-2. **`app/services/agent_service.py`** — LangChain agent
-   ```python
-   async def run_agent(req: ChatRequest) -> ChatResponse:
-       # 1. Get user's stored provider/model/api_key
-       # 2. Build LLM client (ChatGroq, OpenAI, etc.)
-       # 3. Create LangChain agent with tools:
-       #    - DuckDuckGo_Search
-       #    - ArxivQueryRun
-       #    - WikipediaQueryRun
-       # 4. Run agent loop (ZERO_SHOT_REACT)
-       # 5. Return answer + tool_steps
-   ```
-
-3. **`app/api/chat.py`** — Chat endpoint
-   ```
-   POST /api/chat
-   {
-     message: str,
-     session_id: str,
-     history: list,
-     temperature: float
-   }
-   → ChatResponse { answer, tool_steps, tools_used }
-   ```
-
-4. **Frontend: `src/pages/ChatPage.jsx`**
-   - Message input box
-   - Chat history display
-   - Model selector (dropdown)
-   - Loading indicator while agent runs
-
-5. **Frontend: `src/components/chat/ChatMessage.jsx`**
-   - Display user messages (right)
-   - Display assistant messages (left)
-   - Show tool usage (e.g., "Used DuckDuckGo, Wikipedia")
-
-**Test:**
-```bash
-# 1. Make sure Settings are configured
-# 2. Go to /chat
-# 3. Type: "What is the capital of France?"
-# 4. Verify: Agent searches Wikipedia, returns "Paris"
-# 5. Check tools_used: ["Wikipedia"] or ["DuckDuckGo"]
-```
-
----
-
-### **Phase 4: Document Management (Week 4-5)**
-
-#### 4.1 **Add URL Support**
-
-**Files:**
-
-1. **`app/services/url_service.py`** — Web scraping
-   - `scrape_url(url)` → extract text
-   - `split_chunks(text)` → break into manageable pieces
-
-2. **`app/services/embeddings.py`** — Vector embeddings
-   - `embed_text(text)` → create vector (Sentence Transformers)
-   - Store embeddings in Chroma
-
-3. **`app/api/sources.py`** — Document endpoints
-   ```
-   POST /api/sources/url      { url, session_id }
-   DELETE /api/sources/url    { url, session_id }
-   GET /api/sources/list      { session_id }
-   ```
-
-4. **Frontend: `src/components/SourcesPanel.jsx`**
-   - Input: paste URL
-   - Button: "Add Source"
-   - List: show added sources
-   - Button: delete source
-
-**Test:**
-```bash
-# 1. Open /chat
-# 2. Click "Add Source" → enter a URL (e.g., https://en.wikipedia.org/wiki/Python_(programming_language))
-# 3. Wait for scraping + embedding
-# 4. Ask: "What is Python?"
-# 5. Verify: Agent cites the added URL
-```
-
-#### 4.2 **Add PDF Support**
-
-**Files:**
-
-1. **`app/services/pdf_service.py`** — PDF parsing
-   - `parse_pdf(file)` → extract text
-   - `split_chunks(text)` → vectorize
-
-2. **Frontend: File upload to `/api/sources/pdf`**
-   - Drag-drop or file picker
-   - Send to backend
-   - Show progress
-
-**Test:**
-```bash
-# 1. Upload a PDF
-# 2. Ask a question about its content
-# 3. Verify: Agent retrieves relevant chunks
-```
-
----
-
-### **Phase 5: Session Management (Week 5)**
-
-#### 5.1 **Session State**
-
-**Files:**
-
-1. **`app/services/session_store.py`** — User sessions
-   - Store user's sources per session_id
-   - Retrieve tools for RAG context
-
-2. **Frontend: `src/hooks/useSession.js`**
-   - Manage session_id (localStorage or generate UUID)
-
-**Test:**
-```bash
-# 1. Create 2 sessions
-# 2. Add different sources to each
-# 3. Switch between sessions
-# 4. Verify: each session has its own docs
-```
-
----
-
-### **Phase 6: Advanced Features (Week 6+)**
-
-#### 6.1 **LLM Recommender**
-
-**Files:**
-
-1. **`app/api/recommend.py`**
-   ```
-   POST /api/recommend
-   { query: str }
-   → RecommendResponse { recommendations, top_pick, reasoning }
-   ```
-
-2. **Frontend: `src/pages/RecommendPage.jsx`**
-   - Input: describe your task
-   - Output: ranked LLM recommendations
-
-#### 6.2 **Admin Dashboard**
-
-- View all users
-- Monitor API usage
-- See conversation stats
-
----
-
-## Key Concepts for Beginners
-
-### **1. Authentication Flow**
-
-```
-JWT = JSON Web Token (like a signed ID card)
-- Access Token: short-lived (15 min), used for API requests
-- Refresh Token: long-lived (7 days), used to get new access tokens
-- Redis: stores refresh tokens for quick lookup
-- DB: stores refresh token hashes for audit trail
-```
-
-### **2. API Key Encryption**
-
-```
-User enters API key in Settings
-↓
-Backend encrypts it using Fernet (cryptography.fernet)
-↓
-Stored in DB as ciphertext
-↓
-At runtime, decrypt to use with LLM API
-```
-
-### **3. LangChain Agent Loop**
-
-```
-Observation:
-I need to search for information about Python
-
-Action:
-Use DuckDuckGo_Search tool
-
-Thought:
-The search results are good, I have my answer
-
-Final Answer:
-"Python is..."
-```
-
-### **4. Vector Embeddings & RAG**
-
-```
-User uploads document
-↓
-Break into chunks (e.g., 500 characters each)
-↓
-Convert each chunk to a vector (e.g., 384-dim)
-↓
-Store in Chroma (vector database)
-↓
-At query time:
-  - Convert query to vector
-  - Find similar chunks (cosine similarity)
-  - Include top chunks in LLM prompt
-  - LLM answers based on retrieved context
-```
-
----
-
-## Folder Structure Explained
-
-```
-backend/
-├── main.py                 # FastAPI app entry point
-├── requirements.txt        # Python dependencies
-├── .env                    # Secrets (DATABASE_URL, JWT_SECRET_KEY, etc.)
-│
-├── app/
-│   ├── __init__.py
-│   │
-│   ├── api/                # HTTP endpoints
-│   │   ├── auth.py        # Signup, login, logout
-│   │   ├── chat.py        # Chat endpoint (RAG agent)
-│   │   ├── settings.py    # User LLM configuration
-│   │   ├── sources.py     # Add/list documents
-│   │   └── recommend.py   # LLM recommendations
-│   │
-│   ├── core/              # Models & database
-│   │   ├── models_db.py   # SQLAlchemy ORM (User, Document, Chunk, RefreshToken)
-│   │   ├── models.py      # Pydantic request/response schemas
-│   │   ├── schemas.py     # Auth, settings, chat schemas
-│   │   ├── database.py    # PostgreSQL async setup
-│   │   └── memory.py      # Conversation memory formatting
-│   │
-│   ├── services/          # Business logic
-│   │   ├── auth_service.py          # JWT, password hashing
-│   │   ├── agent_service.py         # LangChain agent
-│   │   ├── providers.py             # LLM abstractions (Groq, OpenAI, Anthropic)
-│   │   ├── embeddings.py            # Vector generation
-│   │   ├── pdf_service.py           # PDF parsing
-│   │   ├── url_service.py           # Web scraping
-│   │   ├── session_store.py         # Session state
-│   │   ├── vector_store.py          # Chroma integration
-│   │   └── recommender_service.py   # LLM selection logic
-│   │
-│   ├── middleware/        # Request/response middleware
-│   │   └── auth.py       # JWT extraction & validation
-│   │
-│   └── utils/            # Helpers
-│       └── logger.py     # Structured logging
-│
-└── logs/                 # Application logs
-
-frontend/
-├── index.html            # Entry HTML
-├── package.json          # Node.js dependencies
-│
-├── src/
-│   ├── main.jsx         # React entry
-│   ├── App.jsx          # Main app component
-│   ├── index.css        # Global styles
-│   │
-│   ├── pages/           # Full-page components
-│   │   ├── LoginPage.jsx
-│   │   ├── SignupPage.jsx
-│   │   ├── ChatPage.jsx
-│   │   ├── SettingsPage.jsx
-│   │   ├── RecommendPage.jsx
-│   │   └── ApiKeyGate.jsx
-│   │
-│   ├── components/      # Reusable components
-│   │   ├── chat/
-│   │   │   ├── ChatInput.jsx       # Message input box
-│   │   │   ├── ChatMessage.jsx     # Message display
-│   │   │   ├── ModelSelector.jsx   # Model dropdown
-│   │   │   └── SourcesPanel.jsx    # Manage documents
-│   │   ├── layout/
-│   │   │   └── Layout.jsx          # Navigation + layout
-│   │   └── ui/                     # Shared UI components
-│   │
-│   ├── hooks/           # Custom React hooks
-│   │   ├── useAuth.jsx  # Auth context & methods
-│   │   ├── useSession.js # Session management
-│   │   └── useApiKey.js # API key management
-│   │
-│   ├── services/        # API calls
-│   │   └── api.js       # Axios client + endpoints
-│   │
-│   └── utils/           # Helpers
-│       └── ...
-```
-
----
-
-## Common Tasks
-
-### **Add a New LLM Provider (e.g., Cohere)**
-
-1. **Edit `app/services/providers.py`:**
-   ```python
-   class CohereProvider(LLMProviderBase):
-       async def ainvoke(self, messages: list[dict]) -> str:
-           # Use cohere SDK
-           ...
-   
-   PROVIDER_MAP['cohere'] = CohereProvider
-   ```
-
-2. **Edit `app/core/models_db.py`:**
-   ```python
-   class LLMProvider(str, Enum):
-       GROQ = "groq"
-       OPENAI = "openai"
-       ANTHROPIC = "anthropic"
-       COHERE = "cohere"  # ADD
-   ```
-
-3. **Edit `frontend/src/pages/SettingsPage.jsx`:**
-   ```jsx
-   const PROVIDERS = [
-     { value: 'cohere', label: 'Cohere', models: [...] },
-     ...
-   ]
-   ```
-
-### **Add a New Tool to the Agent**
-
-1. **In `app/services/agent_service.py`:**
-   ```python
-   def _base_tools():
-       return [
-           DuckDuckGoSearchRun(...),
-           MyCustomTool(),  # ADD
-           ...
-       ]
-   ```
-
-2. **Define `MyCustomTool` (inherit from `langchain.tools.BaseTool`)**
-
-### **Change Default Temperature**
-
-- Edit `app/core/models_db.py`: `temperature: Mapped[float] = mapped_column(Float, default=0.7)`
-- Frontend: Update default in `useAuth.jsx`
+## API Endpoints Reference
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| POST | `/api/auth/signup` | No | Create account |
+| POST | `/api/auth/login` | No | Login, get tokens |
+| POST | `/api/auth/logout` | Yes | Invalidate tokens |
+| POST | `/api/auth/refresh/v2` | No | Refresh access token |
+| GET | `/api/auth/me` | Yes | Get current user |
+| GET | `/api/settings` | Yes | Get LLM config + decrypted key |
+| PUT | `/api/settings` | Yes | Update LLM config |
+| POST | `/api/settings/test` | Yes | Test LLM connection |
+| POST | `/api/chat` | Optional | Send message to RAG agent |
+| POST | `/api/sources/url` | Yes | Add URL source |
+| POST | `/api/sources/pdf` | Yes | Upload PDF source |
+| GET | `/api/sources/list` | Yes | List session sources |
+| DELETE | `/api/sources/url` | Yes | Remove URL source |
+| DELETE | `/api/sources/pdf` | Yes | Remove PDF source |
+| POST | `/api/recommend` | Yes | Get LLM recommendations |
+| GET | `/` | No | Health check |
+| GET | `/health` | No | Health check |
+| GET | `/docs` | No | Swagger UI |
+| GET | `/redoc` | No | ReDoc UI |
 
 ---
 
 ## Testing Checklist
 
-- [ ] Signup works
-- [ ] Login works
-- [ ] Settings saved correctly
-- [ ] API key encrypted/decrypted
-- [ ] Chat works with Groq
-- [ ] Chat works with OpenAI
-- [ ] Chat works with Anthropic
-- [ ] URL scraping works
-- [ ] PDF parsing works
-- [ ] Agent uses correct tools
-- [ ] Session management works
-- [ ] Tokens refresh on expiry
-- [ ] Logout clears tokens
+- [ ] Signup with email + password
+- [ ] Login with credentials
+- [ ] Auto-refresh token on expiry (wait 15 min or test manually)
+- [ ] Logout clears all tokens
+- [ ] Save settings (provider, API key, model)
+- [ ] API key eye toggle (show/hide)
+- [ ] API key persists on page reload (fetched from DB)
+- [ ] Test connection button works
+- [ ] Chat works with Groq (`llama-3.3-70b-versatile`)
+- [ ] Chat works with OpenRouter
+- [ ] Chat works with DeepSeek
+- [ ] Chat works with custom provider (e.g., Ollama local)
+- [ ] Add URL source → ask about it → agent uses it
+- [ ] Upload PDF → ask about it → agent uses it
+- [ ] Conversation memory works (follow-up questions)
+- [ ] Smart tool detection: "hi" → no agent loop
+- [ ] Smart tool detection: "what is my name" → no agent loop
+- [ ] Smart tool detection: with PDFs → agent uses custom tools
+- [ ] Rate limiting: 60+ requests/min → 429 error
+- [ ] Error messages show correct type (parse vs rate limit vs timeout)
+- [ ] Recommender page works
+- [ ] CORS works from frontend origin
+- [ ] Refresh token rotation (old token invalidated on refresh)
 
 ---
 
 ## Deployment Checklist
 
-- [ ] Change `JWT_SECRET_KEY` to random value
-- [ ] Set `ENCRYPTION_KEY` to proper Fernet key
-- [ ] Use PostgreSQL in production (not SQLite)
-- [ ] Configure Redis with password
-- [ ] Set `ALLOWED_ORIGINS` for CORS
-- [ ] Enable HTTPS
-- [ ] Use environment variables (no hardcoded secrets)
+- [ ] Change `JWT_SECRET_KEY` to a long random value
+- [ ] Set `ENCRYPTION_KEY` to a proper Fernet key (not "pratham_raj")
+- [ ] Use managed PostgreSQL (Neon.tech, AWS RDS, etc.)
+- [ ] Configure Upstash Redis (with password)
+- [ ] Set `ALLOWED_ORIGINS` to production frontend URL
+- [ ] Enable HTTPS (via Nginx reverse proxy or cloud LB)
+- [ ] Use environment variables for all secrets
+- [ ] Run database migrations on startup
 - [ ] Set up logging to external service
-- [ ] Configure rate limiting
+- [ ] Configure proper rate limits for production
 - [ ] Test with production load
-
----
-
-## Next Steps
-
-1. **Fork/clone this repo**
-2. **Set up `.env` with your database credentials**
-3. **Start with Phase 1: Authentication**
-4. **Test each phase locally before moving to the next**
-5. **Deploy using Docker** (see `docker-compose.yml`)
-
----
-
-## Resources
-
-- **LangChain Docs:** https://python.langchain.com/docs/get_started/introduction
-- **FastAPI Docs:** https://fastapi.tiangolo.com/
-- **React Docs:** https://react.dev/
-- **SQLAlchemy Async:** https://docs.sqlalchemy.org/en/20/orm/extensions/asyncio.html
-- **JWT:** https://jwt.io/
-
----
-
-## Questions?
-
-Refer to the code comments in each file for detailed explanations. Each module is well-documented.
-
-Happy coding! 🚀
+- [ ] Set up monitoring/alerts
