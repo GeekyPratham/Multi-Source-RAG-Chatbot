@@ -130,10 +130,14 @@ async def _direct_query(llm, message: str, history_text: str) -> str:
         return str(result)
 
 
-async def run_agent(req: ChatRequest) -> ChatResponse:
+async def run_agent(req: ChatRequest, user_id: str | None = None) -> ChatResponse:
+    # Tools are scoped to the authenticated user (derived from the JWT) so a
+    # user can only ever retrieve from their own isolated vector collections.
+    # Falls back to session_id for unauthenticated/legacy callers.
+    scope_key = user_id or req.session_id
     history_text = build_history_text(req.history, max_turns=req.memory_turns)
-    source_lines = get_source_lines(req.session_id)
-    custom_tools = get_all_tools(req.session_id)
+    source_lines = get_source_lines(scope_key)
+    custom_tools = get_all_tools(scope_key)
     all_tools = custom_tools + _base_tools()
 
     provider = req.provider or "groq"

@@ -10,6 +10,7 @@ import SettingsPage from './pages/SettingsPage'
 export default function App() {
   const { isAuthenticated, loading } = useAuth()
 
+  // Show loading indicator while checking authentication -> bouncing dots
   if (loading) {
     return (
       <div className="min-h-screen bg-surface-900 flex items-center justify-center">

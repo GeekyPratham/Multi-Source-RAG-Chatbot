@@ -8,6 +8,7 @@ from app.core.schemas import (
     RefreshRequest, RefreshResponse, MessageResponse,
 )
 from app.middleware.auth import get_current_user
+from app.services import session_store, user_store
 from app.services.auth_service import (
     hash_password, verify_password, create_access_token,
     issue_refresh_token, rotate_refresh_token,
@@ -116,10 +117,31 @@ async def refresh_v2(req: dict):
 
 # ── Logout ─────────────────────────────────────────────────────────────────────
 @router.post("/logout", response_model=MessageResponse)
-async def logout(current_user: User = Depends(get_current_user)):
-    """Invalidate the current user's refresh token."""
-    await delete_refresh_token_redis(str(current_user.id))
-    log.info("User logged out: %s", current_user.email)
+async def logout(
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+):
+    """Invalidate the current user's refresh token and purge their vectors.
+
+    On logout we delete every user-owned Chroma collection, the user's
+    document/chunk rows, and their in-memory retrieval tools ("purge on
+    logout"), so no vector data survives a session.
+    """
+    user_key = str(current_user.id)
+    await delete_refresh_token_redis(user_key)
+
+    try:
+        removed = await user_store.purge_user_data(
+            user_id=current_user.id, session=session, reason="logout"
+        )
+        session_store.clear_session(user_key)
+        log.info(
+            "User logged out: %s — purged %d vector collection(s) + document rows",
+            current_user.email, removed,
+        )
+    except Exception as e:  # pragma: no cover - never block logout on cleanup
+        log.error("Logout purge failed for user %s: %s", current_user.email, e)
+
     return MessageResponse(message="Logged out successfully")
 
 

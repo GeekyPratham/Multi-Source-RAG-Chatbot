@@ -55,9 +55,9 @@
 │  │  Services Layer (Business Logic)                             │   │
 │  │  ├─ auth_service.py     JWT, refresh tokens, passwords       │   │
 │  │  ├─ agent_service.py    LangChain agent, tool orchestration  │   │
-│  │  ├─ providers.py        LLM abstractions + tenacity retry   │   │
-│  │  ├─ pdf_service.py      PDF → chunks → Chroma → tool        │   │
-│  │  ├─ url_service.py      URL → scrape → chunks → Chroma→tool │   │
+│  │  ├─ providers.py        LLM abstractions + tenacity retry    │   │
+│  │  ├─ pdf_service.py      PDF → chunks → Chroma → tool         │   │
+│  │  ├─ url_service.py      URL → scrape → chunks → Chroma→tool  │   │
 │  │  ├─ session_store.py    In-memory per-session tool registry  │   │
 │  │  ├─ vector_store.py     ChromaDB integration                 │   │
 │  │  ├─ redis_service.py    Upstash/local Redis abstraction      │   │

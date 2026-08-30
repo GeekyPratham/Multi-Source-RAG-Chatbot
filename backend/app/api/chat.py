@@ -64,7 +64,8 @@ async def chat(
                 detail="no_api_key_configured",
             )
 
-        return await run_agent(req)
+        current_user_id = str(current_user.id) if current_user else None
+        return await run_agent(req, user_id=current_user_id)
     except HTTPException:
         raise
     except Exception as e:
