@@ -55,7 +55,7 @@ class ChatRequest(BaseModel):
     session_id: str = "default"
     temperature: float = 0.7
     provider: str = "groq"
-    base_url: str | None = None
+    base_url: str
 
 
 class ToolStep(BaseModel):

@@ -33,7 +33,7 @@ export default function ChatPage() {
   // Check if user has configured settings on mount
   useEffect(() => {
     if (user && !settingsChecked) {
-      const needsSettings = !user.llm_provider || !user.llm_model || !user.has_api_key;
+      const needsSettings = !user.llm_provider || !user.llm_model || !user.has_api_key || !user.llm_base_url;
       if (needsSettings) {
         toast(
           (t) => (
@@ -80,6 +80,8 @@ export default function ChatPage() {
       const res = await sendChat({
         message: text,
         model_name: user?.llm_model || "",
+        provider: user?.llm_provider || "groq",
+        base_url: user?.llm_base_url || "",
         memory_turns: 6,
         history,
         session_id: sessionId,
@@ -184,35 +186,6 @@ export default function ChatPage() {
             </div>
           ),
           { duration: 6000 },
-        );
-      }
-      // Handle rate limit hit
-      else if (detail === "rate_limit_hit") {
-        toast(
-          (t) => (
-            <div className="flex items-center gap-3">
-              <span className="text-orange-400 text-lg">⏳</span>
-              <div className="flex-1">
-                <p className="text-sm font-medium text-white">
-                  Rate limit reached
-                </p>
-                <p className="text-xs text-gray-400">
-                  Your API key hit its rate limit. Try a different key or wait.
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  toast.dismiss(t.id);
-                  navigate("/settings");
-                }}
-                className="px-3 py-1.5 rounded-lg bg-brand-500/20 border border-brand-500/30 text-brand-400 hover:bg-brand-500/30 text-xs font-medium transition-colors flex items-center gap-1"
-              >
-                <Settings className="w-3 h-3" />
-                Change Key
-              </button>
-            </div>
-          ),
-          { duration: 8000 },
         );
       }
       // Handle invalid API key

@@ -17,17 +17,18 @@ import { useAuth } from "../hooks/useAuth";
 import { api } from "../services/api";
 import toast from "react-hot-toast";
 
-// Well-known providers for helpful suggestions (but user can type any)
+// Known providers for helpful suggestions (but user can type any).
+// Base URL is always required from the user — no provider-specific defaults.
 const KNOWN_PROVIDERS = [
-  { value: "groq", label: "Groq", hint: "llama-3.3-70b-versatile", needsBaseUrl: false },
-  { value: "openai", label: "OpenAI", hint: "gpt-4o", needsBaseUrl: false },
-  { value: "anthropic", label: "Anthropic", hint: "claude-3-5-sonnet-20241022", needsBaseUrl: true },
-  { value: "deepseek", label: "DeepSeek", hint: "deepseek-chat", needsBaseUrl: false },
-  { value: "mistral", label: "Mistral", hint: "mistral-small", needsBaseUrl: false },
-  { value: "together", label: "Together AI", hint: "mistralai/Mixtral-8x7B-Instruct-v0.1", needsBaseUrl: false },
-  { value: "openrouter", label: "OpenRouter", hint: "openai/gpt-4o", needsBaseUrl: false },
-  { value: "perplexity", label: "Perplexity", hint: "llama-3-sonar-small-32k", needsBaseUrl: false },
-  { value: "ollama", label: "Ollama (local)", hint: "llama3", needsBaseUrl: true },
+  { value: "groq", label: "Groq", hint: "llama-3.3-70b-versatile" },
+  { value: "openai", label: "OpenAI", hint: "gpt-4o" },
+  { value: "anthropic", label: "Anthropic", hint: "claude-3-5-sonnet-20241022" },
+  { value: "deepseek", label: "DeepSeek", hint: "deepseek-chat" },
+  { value: "mistral", label: "Mistral", hint: "mistral-small" },
+  { value: "together", label: "Together AI", hint: "mistralai/Mixtral-8x7B-Instruct-v0.1" },
+  { value: "openrouter", label: "OpenRouter", hint: "openai/gpt-4o" },
+  { value: "perplexity", label: "Perplexity", hint: "llama-3-sonar-small-32k" },
+  { value: "ollama", label: "Ollama (local)", hint: "llama3" },
 ];
 
 export default function SettingsPage() {
@@ -91,14 +92,6 @@ export default function SettingsPage() {
   const selectedProviderHint = KNOWN_PROVIDERS.find(
     (p) => p.value === form.llmProvider
   );
-  const knownProvider = KNOWN_PROVIDERS.find((p) => p.value === form.llmProvider);
-
-  // Auto-fill base URL when provider changes (if known)
-  useEffect(() => {
-    if (knownProvider && !knownProvider.needsBaseUrl && !form.llmBaseUrl) {
-      setForm((prev) => ({ ...prev, llmBaseUrl: "" }));
-    }
-  }, [form.llmProvider]);
 
   async function handleSave(e) {
     e.preventDefault();
@@ -110,6 +103,10 @@ export default function SettingsPage() {
     }
     if (!form.llmModel.trim()) {
       toast.error("Please enter a model name");
+      return;
+    }
+    if (!form.llmBaseUrl.trim()) {
+      toast.error("Please enter a base URL (e.g., https://api.groq.com/openai/v1)");
       return;
     }
     if (!form.llmApiKey.trim() && !hasApiKey) {
@@ -128,14 +125,10 @@ export default function SettingsPage() {
         llm_provider: form.llmProvider.trim(),
         llm_model: form.llmModel.trim(),
         temperature: form.temperature,
+        llm_base_url: form.llmBaseUrl.trim(),
       };
       if (form.llmApiKey.trim()) {
         payload.llm_api_key = form.llmApiKey.trim();
-      }
-      if (form.llmBaseUrl.trim()) {
-        payload.llm_base_url = form.llmBaseUrl.trim();
-      } else {
-        payload.llm_base_url = "";
       }
       const res = await api.put("/api/settings", payload, {
         headers: {
@@ -148,6 +141,7 @@ export default function SettingsPage() {
         llm_model: res.data.llm_model,
         temperature: res.data.temperature,
         has_api_key: res.data.has_api_key,
+        llm_base_url: res.data.llm_base_url,
       });
       setHasApiKey(res.data.has_api_key);
       const newKey = res.data.llm_api_key || form.llmApiKey;
@@ -172,6 +166,10 @@ export default function SettingsPage() {
       toast.error("Please enter a model name first");
       return;
     }
+    if (!form.llmBaseUrl.trim()) {
+      toast.error("Please enter a base URL first");
+      return;
+    }
     if (!form.llmApiKey.trim() && !hasApiKey) {
       toast.error("Please enter your API key first");
       return;
@@ -180,18 +178,13 @@ export default function SettingsPage() {
     setTesting(true);
     try {
       // Send credentials to test endpoint (backend now accepts them in body)
-      const testPayload = {};
+      const testPayload = {
+        llm_provider: form.llmProvider.trim(),
+        llm_model: form.llmModel.trim(),
+        llm_base_url: form.llmBaseUrl.trim(),
+      };
       if (form.llmApiKey.trim()) {
         testPayload.llm_api_key = form.llmApiKey.trim();
-      }
-      if (form.llmProvider.trim()) {
-        testPayload.llm_provider = form.llmProvider.trim();
-      }
-      if (form.llmModel.trim()) {
-        testPayload.llm_model = form.llmModel.trim();
-      }
-      if (form.llmBaseUrl.trim()) {
-        testPayload.llm_base_url = form.llmBaseUrl.trim();
       }
 
       const res = await api.post("/api/settings/test", testPayload, {
@@ -209,14 +202,10 @@ export default function SettingsPage() {
           llm_provider: form.llmProvider.trim(),
           llm_model: form.llmModel.trim(),
           temperature: form.temperature,
+          llm_base_url: form.llmBaseUrl.trim(),
         };
         if (form.llmApiKey.trim()) {
           savePayload.llm_api_key = form.llmApiKey.trim();
-        }
-        if (form.llmBaseUrl.trim()) {
-          savePayload.llm_base_url = form.llmBaseUrl.trim();
-        } else {
-          savePayload.llm_base_url = "";
         }
         const saveRes = await api.put("/api/settings", savePayload, {
           headers: {
@@ -229,6 +218,7 @@ export default function SettingsPage() {
           llm_model: saveRes.data.llm_model,
           temperature: saveRes.data.temperature,
           has_api_key: saveRes.data.has_api_key,
+          llm_base_url: saveRes.data.llm_base_url,
         });
         setHasApiKey(saveRes.data.has_api_key);
         const newKey = saveRes.data.llm_api_key || form.llmApiKey;
@@ -393,21 +383,17 @@ export default function SettingsPage() {
                 </p>
               </div>
 
-              {/* Base URL (optional) */}
+              {/* Base URL (required for all providers) */}
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-1">
-                  Base URL <span className="text-gray-500">(optional)</span>
+                  Base URL
                 </label>
                 <div className="flex items-center gap-2">
-                  <Globe className="w-4 h-4 text-gray-500 shrink-0" />
+                  <Globe className="w-4 h-4 text-brand-400 shrink-0" />
                   <input
                     type="text"
                     className="input-base"
-                    placeholder={
-                      knownProvider && !knownProvider.needsBaseUrl
-                        ? `Auto-detected for ${form.llmProvider}`
-                        : "https://api.your-provider.com/v1"
-                    }
+                    placeholder="https://api.your-provider.com/v1"
                     value={form.llmBaseUrl}
                     onChange={(e) =>
                       setForm((prev) => ({ ...prev, llmBaseUrl: e.target.value }))
@@ -415,9 +401,9 @@ export default function SettingsPage() {
                   />
                 </div>
                 <p className="text-xs text-gray-500 mt-1">
-                  {form.llmProvider
-                    ? `Most providers are auto-detected. Enter a custom URL only if needed.`
-                    : "Required for custom/self-hosted providers (e.g., Ollama: http://localhost:11434/v1)"}
+                  Base URL is required for all providers (e.g.,
+                  https://api.groq.com/openai/v1, https://api.openai.com/v1,
+                  http://localhost:11434/v1).
                 </p>
               </div>
             </div>

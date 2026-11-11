@@ -1,7 +1,4 @@
 """services/auth_service.py — JWT creation/validation, password hashing, token storage.
-
-Uses the unified Redis service (Upstash REST or local redis.asyncio) for
-fast token storage. Falls back gracefully to DB-only if Redis is unavailable.
 """
 from __future__ import annotations
 import os
@@ -15,13 +12,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.models_db import User, RefreshToken
 from app.core.database import async_session_factory
-from app.services.redis_service import (
-    setex as redis_setex,
-    get as redis_get,
-    delete as redis_delete,
-    is_available as redis_available,
-    close_redis as redis_close,
-)
 from app.utils.logger import log
 
 # ── Config from environment ───────────────────────────────────────────────────
@@ -67,37 +57,7 @@ def decode_access_token(token: str) -> Optional[str]:
         return None
 
 
-# ── Redis-backed refresh token operations (best-effort) ───────────────────────
-async def store_refresh_token_redis(user_id: str, raw_token: str) -> None:
-    if not redis_available():
-        return  # Redis not available — skip
-    key = f"refresh:{user_id}"
-    ttl = REFRESH_TOKEN_EXPIRE_DAYS * 86400
-    success = await redis_setex(key, ttl, raw_token)
-    if success:
-        log.debug("Stored refresh token in Redis for user %s", user_id)
-    else:
-        log.warning("Redis store failed for user %s", user_id)
-
-
-async def validate_refresh_token_redis(user_id: str, raw_token: str) -> bool:
-    if not redis_available():
-        log.warning("Redis unavailable — cannot validate refresh token for user %s", user_id)
-        return False
-    try:
-        stored = await redis_get(f"refresh:{user_id}")
-        return stored == raw_token
-    except Exception:
-        return False
-
-
-async def delete_refresh_token_redis(user_id: str) -> None:
-    if not redis_available():
-        return
-    await redis_delete(f"refresh:{user_id}")
-
-
-# ── Database-backed refresh token persistence (fallback / rotation audit) ─────
+# ── Database-backed refresh token persistence ──────────────────────────────────
 async def store_refresh_token_db(user_id: uuid.UUID, token_hash: str, expires_at: datetime) -> None:
     async with async_session_factory() as session:
         rt = RefreshToken(
@@ -128,8 +88,6 @@ async def issue_refresh_token(user_id: uuid.UUID) -> str:
     raw, token_hash = create_refresh_token()
     expires_at = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
 
-    # Store in Redis for fast lookup
-    await store_refresh_token_redis(str(user_id), raw)
     # Store hash in DB for audit
     await store_refresh_token_db(user_id, token_hash, expires_at)
 
@@ -138,13 +96,8 @@ async def issue_refresh_token(user_id: uuid.UUID) -> str:
 
 async def rotate_refresh_token(old_user_id: str, old_raw_token: str) -> Optional[tuple[str, str, str]]:
     """Validate old token and issue new pair. Returns (access_token, refresh_token, user_id) or None."""
-    # Validate the old token
-    if not await validate_refresh_token_redis(old_user_id, old_raw_token):
-        return None
-
     user_uuid = uuid.UUID(old_user_id)
-    # Delete old
-    await delete_refresh_token_redis(old_user_id)
+    # Invalidate all existing tokens for this user in DB
     await invalidate_all_refresh_tokens_db(user_uuid)
 
     # Issue new

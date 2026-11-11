@@ -61,8 +61,6 @@ export default function RecommendPage() {
       const detail = e?.response?.data?.detail || ''
       if (detail === 'no_api_key_configured') {
         toast.error('No API key configured. Go to Settings to add one.')
-      } else if (detail === 'rate_limit_hit') {
-        toast.error('API rate limit reached. Try a different key in Settings or wait.')
       } else if (detail === 'invalid_api_key') {
         toast.error('Invalid API key. Update it in Settings.')
       } else {

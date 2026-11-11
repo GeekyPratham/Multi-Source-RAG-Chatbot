@@ -1,4 +1,5 @@
 """api/chat.py — /api/chat endpoints."""
+print("Loading chat API endpoints…")
 from fastapi import APIRouter, Depends, HTTPException
 from app.core.models import ChatRequest, ChatResponse
 from app.core.models_db import User
@@ -71,11 +72,6 @@ async def chat(
     except Exception as e:
         error_str = str(e).lower()
         log.error("Chat error: %s", e, exc_info=True)
-        # Only flag rate limit when it's clearly from the LLM provider (not tool calls)
-        if "rate_limit_exceeded" in error_str or "rate limit exceeded" in error_str or (
-            "429" in error_str and any(p in error_str for p in ["groq", "openai", "anthropic", "llm", "token"])
-        ):
-            raise HTTPException(status_code=429, detail="rate_limit_hit")
         # Only flag invalid API key on explicit auth failures from the LLM provider
         if any(x in error_str for x in ["invalid api key", "invalid_api_key", "incorrect api key", "authentication failed", "unauthorized"])  and "401" in error_str:
             raise HTTPException(status_code=401, detail="invalid_api_key")

@@ -1,6 +1,5 @@
 """services/agent_service.py — builds and runs the RAG agent."""
 from __future__ import annotations
-from langchain_groq import ChatGroq
 from langchain_classic.agents import AgentType, initialize_agent
 from langchain_classic.agents.agent import AgentExecutor
 from langchain_community.tools import ArxivQueryRun, DuckDuckGoSearchRun, WikipediaQueryRun
@@ -22,18 +21,15 @@ def _base_tools() -> list:
 
 
 def _build_chat_model(provider_name: str, api_key: str, model: str, temperature: float, base_url: str | None = None):
-    """Build a LangChain-compatible chat model for any provider."""
+    """Build a LangChain-compatible chat model for any provider.
+
+    All providers (including Groq) go through the provider abstraction so
+    that the user-supplied base_url is always honored.
+    """
     name = provider_name.strip().lower() if provider_name else "groq"
 
-    if name == "groq":
-        return ChatGroq(
-            groq_api_key=api_key,
-            model_name=model,
-            streaming=False,
-            temperature=temperature,
-        )
-
-    # For non-Groq providers, create a custom LangChain-compatible wrapper
+    # All providers go through the OpenAI-compatible provider abstraction so
+    # that user-supplied base_url is always honored, regardless of provider.
     from langchain_core.language_models.llms import LLM
     from typing import Optional, List, Any
 
@@ -209,8 +205,6 @@ async def run_agent(req: ChatRequest, user_id: str | None = None) -> ChatRespons
             # Determine a helpful error message based on the error type
             if "OutputParserException" in error_type or "parse" in error_msg.lower():
                 user_msg = "The model had trouble formatting its response. Try rephrasing your question or switching to a different model."
-            elif "RateLimit" in error_type or "429" in error_msg or "rate_limit" in error_msg.lower():
-                user_msg = "Rate limit exceeded by the provider. Please wait a moment and try again."
             elif "Timeout" in error_type or "timed out" in error_msg.lower():
                 user_msg = "The model took too long to respond. Try a faster model or try again."
             else:

@@ -4,8 +4,11 @@ Every ingestion/removal is bound to the authenticated user (derived from the
 JWT). Vectors live in user-isolated Chroma collections and are purged on
 logout or per-document removal. Missing/invalid auth → 401.
 """
-from __future__ import annotations
 
+
+
+from __future__ import annotations
+print("Loading sources API endpoints…")
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

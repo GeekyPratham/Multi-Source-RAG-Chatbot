@@ -19,20 +19,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  redis:
-    image: redis:7-alpine
-    container_name: insightagent_redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - insightagent_redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    restart: unless-stopped
-
   backend:
     build:
       context: ./backend
@@ -43,15 +29,12 @@ services:
     environment:
       - ALLOWED_ORIGINS=http://localhost:5173,http://localhost:3000,http://frontend:3000
       - DATABASE_URL=postgresql+asyncpg://insightagent:insightagent@postgres:5432/insightagent
-      - REDIS_URL=redis://redis:6379/0
       - JWT_SECRET_KEY=change-this-in-production
       - JWT_ACCESS_EXPIRE_MIN=15
       - JWT_REFRESH_EXPIRE_DAYS=7
       - ENCRYPTION_KEY= # Auto-generated if empty, set a stable key for production
     depends_on:
       postgres:
-        condition: service_healthy
-      redis:
         condition: service_healthy
     volumes:
       - insightagent_vectors:/app/vector_store
@@ -77,7 +60,6 @@ services:
 
 volumes:
   insightagent_pgdata:
-  insightagent_redisdata:
   insightagent_vectors:
   insightagent_cache:
   insightagent_logs:

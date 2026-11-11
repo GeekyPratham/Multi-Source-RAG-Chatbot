@@ -10,20 +10,10 @@ from abc import ABC, abstractmethod
 from typing import Any, Optional
 from app.utils.logger import log
 
-# ── Known provider base URLs (OpenAI-compatible) ─────────────────────────────
-# If a provider is not in this map, users must provide a base_url explicitly
-PROVIDER_BASE_URLS = {
-    "groq": "https://api.groq.com/openai/v1",
-    "openai": "https://api.openai.com/v1",
-    "deepseek": "https://api.deepseek.com/v1",
-    "mistral": "https://api.mistral.ai/v1",
-    "together": "https://api.together.xyz/v1",
-    "togethercomputer": "https://api.together.xyz/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-    "perplexity": "https://api.perplexity.ai",
-    "claude": None,  # special - uses Anthropic format
-    "anthropic": None,  # special - uses Anthropic format
-}
+# No provider-specific base URL defaults — users must always supply a base URL.
+# Kept as an empty placeholder for future use; get_base_url() returns only the
+# user-provided value and never falls back to a hardcoded URL.
+PROVIDER_BASE_URLS: dict[str, str | None] = {}
 
 # Providers that use the Anthropic API format
 ANTHROPIC_PROVIDERS = {"anthropic", "claude"}
@@ -110,43 +100,32 @@ class GenericOpenAIProvider(LLMProviderBase):
     """Generic OpenAI-compatible provider — works with any API that follows the OpenAI format."""
 
     async def ainvoke(self, messages: list[dict]) -> str:
-        from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception
         import httpx
 
-        def _is_rate_limit(e):
-            return isinstance(e, httpx.HTTPStatusError) and e.response.status_code == 429
+        base_url = self.base_url or "https://api.openai.com/v1"
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.post(
+                f"{base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": self.temperature,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
 
-        @retry(
-            wait=wait_exponential(min=2, max=30),
-            stop=stop_after_attempt(4),
-            retry=retry_if_exception(_is_rate_limit),
-        )
-        async def _do_invoke():
-            base_url = self.base_url or "https://api.openai.com/v1"
-            async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(
-                    f"{base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": self.model,
-                        "messages": messages,
-                        "temperature": self.temperature,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                # Handle different response formats (OpenAI-compatible, OpenRouter, etc.)
-                if "choices" in data and len(data["choices"]) > 0:
-                    return data["choices"][0]["message"]["content"]
-                elif "error" in data:
-                    raise ValueError(f"Provider error: {data['error'].get('message', str(data['error']))}")
-                else:
-                    raise ValueError(f"Unexpected response format from provider: {str(data)[:300]}")
-
-        return await _do_invoke()
+        # Handle different response formats (OpenAI-compatible, OpenRouter, etc.)
+        if "choices" in data and len(data["choices"]) > 0:
+            return data["choices"][0]["message"]["content"]
+        elif "error" in data:
+            raise ValueError(f"Provider error: {data['error'].get('message', str(data['error']))}")
+        else:
+            raise ValueError(f"Unexpected response format from provider: {str(data)[:300]}")
 
 
 class AnthropicProvider(LLMProviderBase):
@@ -173,9 +152,10 @@ class AnthropicProvider(LLMProviderBase):
         if system_prompt:
             body["system"] = system_prompt
 
+        base_url = self.base_url or "https://api.anthropic.com/v1"
         async with httpx.AsyncClient(timeout=120) as client:
             resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
+                f"{base_url}/messages",
                 headers={
                     "x-api-key": self.api_key,
                     "anthropic-version": "2023-06-01",
@@ -197,14 +177,12 @@ def _normalize_provider(name: str) -> str:
 def get_provider_class(provider_name: str) -> type[LLMProviderBase]:
     """Return the provider class for the given name.
 
-    For known providers, returns the optimized implementation.
-    For unknown providers, returns GenericOpenAIProvider.
+    All providers are treated as OpenAI-compatible except Anthropic.
+    Users must always supply a base_url — there are no provider-specific defaults.
     """
     name = _normalize_provider(provider_name)
 
-    if name == "groq":
-        return GroqProvider
-    elif name == "openai":
+    if name == "openai":
         return OpenAIProvider
     elif name in ANTHROPIC_PROVIDERS:
         return AnthropicProvider
@@ -215,31 +193,27 @@ def get_provider_class(provider_name: str) -> type[LLMProviderBase]:
 def get_base_url(provider_name: str, user_base_url: Optional[str] = None) -> Optional[str]:
     """Get the base URL for a provider.
 
-    If user provides a base_url, use that.
-    Otherwise, look up from known providers.
-    For unknown providers without a base_url, return None (user must provide).
+    Users must always supply a base_url; there are no provider-specific defaults.
     """
     if user_base_url:
         return user_base_url.rstrip("/")
-
-    name = _normalize_provider(provider_name)
-    return PROVIDER_BASE_URLS.get(name)
+    return None
 
 
 async def validate_provider_connection(provider_name: str, api_key: str, model: str, base_url: Optional[str] = None) -> str:
-    """Test a provider connection. Returns success message or raises."""
+    """Test a provider connection. Returns success message or raises.
+
+    A base_url is required for every provider.
+    """
     name = _normalize_provider(provider_name)
     provider_cls = get_provider_class(name)
     resolved_base_url = get_base_url(name, base_url)
 
-    if not resolved_base_url and name not in ANTHROPIC_PROVIDERS and name != "groq":
-        # Generic OpenAI provider needs a base URL
-        if not base_url:
-            raise ValueError(
-                f"Unknown provider '{provider_name}'. "
-                f"Please provide a base URL (e.g., https://api.{provider_name}.com/v1) "
-                f"or use one of: {', '.join(k for k in PROVIDER_BASE_URLS if PROVIDER_BASE_URLS[k])}"
-            )
+    if not resolved_base_url:
+        raise ValueError(
+            f"A base URL is required for provider '{provider_name}'. "
+            f"Please provide a base URL (e.g., https://api.{provider_name}.com/v1)."
+        )
 
     provider = provider_cls(api_key=api_key, model=model, temperature=0.1, base_url=resolved_base_url)
     await provider.validate()

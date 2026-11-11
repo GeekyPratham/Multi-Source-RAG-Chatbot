@@ -37,10 +37,6 @@ passlib[bcrypt]>=1.7.4
 python-jose[cryptography]>=3.3.0
 email-validator>=2.1.0
 
-# ── Redis ────────────────────────────────────────────────────────────────
-redis[hiredis]>=5.1.0
-upstash-redis>=0.15.0
-
 # ── API Key Encryption ───────────────────────────────────────────────────
 cryptography>=42.0.0
 

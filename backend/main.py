@@ -8,21 +8,23 @@ from dotenv import load_dotenv
 
 # Load .env BEFORE any app imports that read environment variables
 load_dotenv()
+print("Loaded .env file with environment variables")
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api import auth, chat, recommend, sources, settings
 from app.core.database import init_db
-from app.services import redis_service
-from app.middleware.ratelimit import RateLimitMiddleware
+from app.core import models_db  # ensure all SQLAlchemy models are registered with Base.metadata before create_all
 from app.utils.logger import log
 from contextlib import asynccontextmanager
+#It is used to create an asynchronous context manager, especially useful for handling startup and shutdown logic in FastAPI.
 from fastapi import Request
+# Request represents the incoming HTTP request sent by a client to your FastAPI application.
 
-
+print("Starting InsightAgent AI API server…")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifecycle: init DB, init Redis, and clean up connections on shutdown."""
+    """Application lifecycle: init DB and clean up connections on shutdown."""
     # ── Warn about missing critical env vars before anything else ────────────
     import os as _os
     if not _os.getenv("ENCRYPTION_KEY"):
@@ -47,19 +49,9 @@ async def lifespan(app: FastAPI):
 
     log.info("Starting InsightAgent AI API — initializing database…")
     await init_db()
-    
-    # ── Initialize Redis (Upstash preferred, local fallback) ──────────────
-    log.info("Initializing Redis connection…")
-    redis_ok = await redis_service.init_redis()
-    if redis_ok:
-        log.info("[OK] Redis is ready (type: %s)", redis_service.get_client_type())
-    else:
-        log.warning("[WARN] Redis is NOT available — refresh token rotation and rate limiting will be degraded")
-    
     yield
     
     log.info("Shutting down — closing connections…")
-    await redis_service.close_redis()
 
 
 app = FastAPI(
@@ -93,9 +85,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ── Rate Limiting (requires Redis — degrades gracefully if unavailable) ─────
-app.add_middleware(RateLimitMiddleware)
 
 # ── Routers ───────────────────────────────────────────────────────────────────
 app.include_router(auth.router)

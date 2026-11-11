@@ -272,7 +272,7 @@ refresh_tokens (
      │  ├─ Split into 1000-char chunks (200 overlap)
      │  ├─ Generate embeddings (sentence-transformers/all-MiniLM-L6-v2)
      │  ├─ Store in ChromaDB (persistent, collection named url_<hash>)
-     │  ├─ Save Document + Chunks in PostgreSQL
+     │  ├─ Save Documentredis + Chunks in PostgreSQL
      │  ├─ Create LangChain retriever tool → "URL_Source_{N}"
      │  ├─ Register in session_store
      │  └─ Return { success, title, message }
@@ -619,11 +619,16 @@ pip install -r requirements.txt
 # Required: DATABASE_URL, JWT_SECRET_KEY, ENCRYPTION_KEY
 # Optional: UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN
 
-# Run database migrations (auto-create tables on startup)
+# The backend creates missing application tables on startup.
+# PostgreSQL database itself must already exist and DATABASE_URL must point to it.
 # Start the server
 uvicorn main:app --reload --port 8000
 # or: uv run uvicorn main:app --reload --port 8000
 ```
+
+Create a new account through `POST /api/auth/signup` (or the frontend sign-up
+form). This stores the user details in the `users` table. `POST /api/auth/login`
+only authenticates an account that already exists.
 
 ### Frontend Setup
 

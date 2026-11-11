@@ -1,4 +1,5 @@
 """api/settings.py — /api/settings endpoints for user LLM configuration."""
+print("Loading settings API endpoints…")
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
@@ -54,7 +55,7 @@ async def update_settings(
         current_user.display_name = req.display_name
 
     if req.llm_base_url is not None:
-        current_user.llm_base_url = req.llm_base_url.strip() if req.llm_base_url.strip() else None
+        current_user.llm_base_url = req.llm_base_url.strip()
 
     await session.commit()
     await session.refresh(current_user)
@@ -94,7 +95,7 @@ async def test_llm_connection(
     # Determine credentials: request body takes priority, else fall back to stored
     provider = req.llm_provider or current_user.llm_provider
     model = req.llm_model or current_user.llm_model
-    base_url = req.llm_base_url or current_user.llm_base_url
+    base_url = req.llm_base_url
 
     if req.llm_api_key:
         api_key = req.llm_api_key
@@ -121,6 +122,4 @@ async def test_llm_connection(
         error_str = str(e).lower()
         if "401" in error_str or "auth" in error_str or "unauthorized" in error_str or "invalid" in error_str:
             raise HTTPException(status_code=400, detail="Invalid API key. Please check and try again.")
-        if "rate" in error_str or "429" in error_str:
-            raise HTTPException(status_code=400, detail="Rate limit hit. Wait a moment and try again.")
         raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)[:300]}")

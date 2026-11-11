@@ -1,4 +1,5 @@
 """api/recommend.py — /api/recommend endpoints."""
+print("Loading recommender API endpoints…")
 from fastapi import APIRouter, Depends, HTTPException
 from app.core.models import RecommendResponse
 from app.core.models_db import User
@@ -41,10 +42,6 @@ async def recommend_llm(
     except Exception as e:
         error_str = str(e).lower()
         log.error("Recommend error: %s", e, exc_info=True)
-        if "rate_limit_exceeded" in error_str or "rate limit exceeded" in error_str or (
-            "429" in error_str and any(p in error_str for p in ["groq", "openai", "anthropic", "token"])
-        ):
-            raise HTTPException(status_code=429, detail="rate_limit_hit")
         if any(x in error_str for x in ["invalid api key", "invalid_api_key", "incorrect api key", "authentication failed", "unauthorized"]) and "401" in error_str:
             raise HTTPException(status_code=401, detail="invalid_api_key")
         raise HTTPException(status_code=500, detail=str(e))

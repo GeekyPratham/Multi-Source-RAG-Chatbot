@@ -53,7 +53,7 @@ class SettingsUpdate(BaseModel):
     llm_model: Optional[str] = Field(None, min_length=1, max_length=100)
     temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
     display_name: Optional[str] = Field(None, max_length=100)
-    llm_base_url: Optional[str] = Field(None, max_length=500)
+    llm_base_url: str = Field(..., min_length=1, max_length=500)
 
 
 class SettingsResponse(BaseModel):
@@ -71,7 +71,7 @@ class TestConnectionRequest(BaseModel):
     llm_provider: Optional[str] = Field(None, min_length=1, max_length=50)
     llm_api_key: Optional[str] = Field(None, max_length=2048)
     llm_model: Optional[str] = Field(None, min_length=1, max_length=100)
-    llm_base_url: Optional[str] = Field(None, max_length=500)
+    llm_base_url: str = Field(..., min_length=1, max_length=500)
 
 
 # ── Generic ────────────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 """api/auth.py — /api/auth endpoints: signup, login, refresh, logout, validate."""
+print("Loading auth API endpoints…")
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
@@ -12,7 +13,7 @@ from app.services import session_store, user_store
 from app.services.auth_service import (
     hash_password, verify_password, create_access_token,
     issue_refresh_token, rotate_refresh_token,
-    delete_refresh_token_redis, get_user_by_email,
+    get_user_by_email,
 )
 from app.utils.logger import log
 
@@ -128,7 +129,6 @@ async def logout(
     logout"), so no vector data survives a session.
     """
     user_key = str(current_user.id)
-    await delete_refresh_token_redis(user_key)
 
     try:
         removed = await user_store.purge_user_data(
