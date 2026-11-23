@@ -3,6 +3,10 @@ __pycache__/
 *.py[oc]
 build/
 dist/
+# Alembic integration local documentation — not for Git
+ALEMBIC_MIGRATION_CHANGES.md
+ALEMBIC_INTEGRATION_SUMMARY.md
+ALEMBIC_PROS_CONS_DEVNOTES.md
 wheels/
 *.egg-info
 

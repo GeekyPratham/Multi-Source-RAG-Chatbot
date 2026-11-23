@@ -17,8 +17,11 @@ class User(Base):
     )
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+
+
     display_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
+    mobile_no: Mapped[str | None] = mapped_column(String(15), nullable=True)
     # LLM provider preferences — stored as plain string to support any provider
     # Users can enter any provider name (groq, openai, anthropic, deepseek, etc.)
     llm_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
